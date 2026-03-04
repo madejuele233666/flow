@@ -4,8 +4,10 @@
 - pytest/pluggy: 框架声明钩子签名，插件选择性实现
 - Webpack/Tapable: 不同钩子有不同执行策略
 
-框架通过 FlowHookSpec 声明全部可用钩子。
-插件只需实现感兴趣的方法，HookManager 自动跳过未实现的。
+Phase 4 升级：
+- 熔断器保护：第三方插件钩子执行超时自动熔断
+- 全部阈值从 PluginBreakerConfig 注入，零 Magic Numbers
+- safe_mode 一键跳过全部第三方钩子
 
 执行策略：
 - parallel  : 全部执行，互不影响（默认）
@@ -16,8 +18,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
-from abc import ABC
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable
@@ -129,22 +132,97 @@ HOOK_SPECS: dict[str, HookSpec] = {
 
 
 # ---------------------------------------------------------------------------
-# 钩子管理器
+# 熔断器 — 轻量级实现，无外部依赖
+# ---------------------------------------------------------------------------
+
+class _BreakerState(str, Enum):
+    CLOSED = "closed"      # 正常
+    OPEN = "open"          # 熔断（拒绝调用）
+    HALF_OPEN = "half_open"  # 试探恢复中
+
+
+class HookBreaker:
+    """单个 handler 级别的熔断器.
+
+    所有阈值参数从外部配置注入，不含任何硬编码数值。
+    """
+
+    def __init__(
+        self,
+        failure_threshold: int,
+        recovery_timeout: float,
+    ) -> None:
+        self._failure_threshold = failure_threshold
+        self._recovery_timeout = recovery_timeout
+        self._failure_count = 0
+        self._state = _BreakerState.CLOSED
+        self._last_failure_time: float = 0.0
+
+    @property
+    def state(self) -> _BreakerState:
+        if self._state == _BreakerState.OPEN:
+            import time
+            elapsed = time.monotonic() - self._last_failure_time
+            if elapsed >= self._recovery_timeout:
+                self._state = _BreakerState.HALF_OPEN
+        return self._state
+
+    def record_success(self) -> None:
+        self._failure_count = 0
+        self._state = _BreakerState.CLOSED
+
+    def record_failure(self) -> None:
+        import time
+        self._failure_count += 1
+        self._last_failure_time = time.monotonic()
+        if self._failure_count >= self._failure_threshold:
+            self._state = _BreakerState.OPEN
+            logger.warning(
+                "breaker OPEN: %d consecutive failures (threshold=%d)",
+                self._failure_count, self._failure_threshold,
+            )
+
+    @property
+    def is_open(self) -> bool:
+        return self.state == _BreakerState.OPEN
+
+
+# ---------------------------------------------------------------------------
+# 钩子管理器（带熔断与超时保护，全异步）
 # ---------------------------------------------------------------------------
 
 class HookManager:
     """钩子注册与调用中心.
 
+    Phase 4 增强：
+    - 每个 handler 绑定独立的 HookBreaker（熔断器）
+    - 超时控制通过 hook_timeout 参数注入
+    - safe_mode=True 时自动跳过全部第三方钩子
+
     用法：
-        mgr = HookManager()
-        mgr.register(my_plugin)  # 自动扫描插件上的同名方法
+        mgr = HookManager(hook_timeout=0.5, failure_threshold=5, recovery_timeout=60)
+        mgr.register(my_plugin)
         result = mgr.call("on_before_transition", task=task, target=state)
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        hook_timeout: float = 0.5,
+        failure_threshold: int = 5,
+        recovery_timeout: float = 60.0,
+        safe_mode: bool = False,
+    ) -> None:
         self._handlers: dict[str, list[Callable[..., Any]]] = {
             name: [] for name in HOOK_SPECS
         }
+        # 每个 handler 独立的熔断器
+        self._breakers: dict[int, HookBreaker] = {}
+
+        # 从配置注入的参数 — 零 Magic Numbers
+        self._hook_timeout = hook_timeout
+        self._failure_threshold = failure_threshold
+        self._recovery_timeout = recovery_timeout
+        self._safe_mode = safe_mode
 
     def register(self, implementor: object) -> list[str]:
         """扫描 implementor 上与 HOOK_SPECS 同名的方法并注册.
@@ -157,6 +235,11 @@ class HookManager:
             method = getattr(implementor, hook_name, None)
             if method is not None and callable(method):
                 self._handlers[hook_name].append(method)
+                # 为每个 handler 创建独立熔断器
+                self._breakers[id(method)] = HookBreaker(
+                    failure_threshold=self._failure_threshold,
+                    recovery_timeout=self._recovery_timeout,
+                )
                 registered.append(hook_name)
         if registered:
             name = getattr(implementor, "name", type(implementor).__name__)
@@ -169,9 +252,10 @@ class HookManager:
             method = getattr(implementor, hook_name, None)
             if method in self._handlers.get(hook_name, []):
                 self._handlers[hook_name].remove(method)
+                self._breakers.pop(id(method), None)
 
-    def call(self, hook_name: str, **kwargs: Any) -> Any:
-        """按策略执行钩子.
+    async def call(self, hook_name: str, **kwargs: Any) -> Any:
+        """按策略执行钩子（带熔断保护，全异步并发）.
 
         Args:
             hook_name: 钩子名称（必须在 HOOK_SPECS 中声明）。
@@ -184,6 +268,9 @@ class HookManager:
             - BAIL: 第一个非 None 结果
             - COLLECT: 所有返回值的列表
         """
+        if self._safe_mode:
+            return None
+
         spec = HOOK_SPECS.get(hook_name)
         if spec is None:
             logger.warning("unknown hook: %s", hook_name)
@@ -196,58 +283,73 @@ class HookManager:
         strategy = spec.strategy
 
         if strategy == HookStrategy.PARALLEL:
-            return self._call_parallel(hook_name, handlers, kwargs)
+            return await self._call_parallel(hook_name, handlers, kwargs)
         elif strategy == HookStrategy.WATERFALL:
-            return self._call_waterfall(hook_name, handlers, kwargs)
+            return await self._call_waterfall(hook_name, handlers, kwargs)
         elif strategy == HookStrategy.BAIL:
-            return self._call_bail(hook_name, handlers, kwargs)
+            return await self._call_bail(hook_name, handlers, kwargs)
         elif strategy == HookStrategy.COLLECT:
-            return self._call_collect(hook_name, handlers, kwargs)
+            return await self._call_collect(hook_name, handlers, kwargs)
         return None
 
-    def _call_parallel(
+    async def _safe_call(self, handler: Callable, kwargs: dict) -> Any:
+        """带熔断 + 超时保护的安全调用. 支持 sync/async handler。"""
+        breaker = self._breakers.get(id(handler))
+        if breaker and breaker.is_open:
+            logger.debug("breaker OPEN for %s, skipping", handler)
+            return None
+
+        try:
+            if inspect.iscoroutinefunction(handler):
+                result = await asyncio.wait_for(handler(**kwargs), timeout=self._hook_timeout)
+            else:
+                result = await asyncio.wait_for(asyncio.to_thread(handler, **kwargs), timeout=self._hook_timeout)
+                
+            if breaker:
+                breaker.record_success()
+            return result
+        except TimeoutError:
+            logger.warning("hook handler %s timed out (limit=%.2fs)", handler, self._hook_timeout)
+            if breaker:
+                breaker.record_failure()
+            return None
+        except Exception:
+            logger.exception("hook handler %s failed", handler)
+            if breaker:
+                breaker.record_failure()
+            return None
+
+    async def _call_parallel(
         self, name: str, handlers: list[Callable], kwargs: dict,
     ) -> None:
-        for handler in handlers:
-            try:
-                handler(**kwargs)
-            except Exception:
-                logger.exception("hook %s handler %s failed", name, handler)
+        tasks = [self._safe_call(handler, kwargs) for handler in handlers]
+        await asyncio.gather(*tasks)
 
-    def _call_waterfall(
+    async def _call_waterfall(
         self, name: str, handlers: list[Callable], kwargs: dict,
     ) -> Any:
         result = kwargs  # 初始传入参数作为第一轮输入
         for handler in handlers:
-            try:
-                ret = handler(**result) if isinstance(result, dict) else handler(result)
-                if ret is not None:
-                    result = ret  # 链式传递
-            except Exception:
-                logger.exception("hook %s handler %s failed", name, handler)
+            ret = await self._safe_call(
+                handler,
+                result if isinstance(result, dict) else {"value": result},
+            )
+            if ret is not None:
+                result = ret  # 链式传递
         return result
 
-    def _call_bail(
+    async def _call_bail(
         self, name: str, handlers: list[Callable], kwargs: dict,
     ) -> Any:
         for handler in handlers:
-            try:
-                ret = handler(**kwargs)
-                if ret is not None:
-                    return ret  # 第一个非 None 胜出
-            except Exception:
-                logger.exception("hook %s handler %s failed", name, handler)
+            ret = await self._safe_call(handler, kwargs)
+            if ret is not None:
+                return ret  # 第一个非 None 胜出
         return None
 
-    def _call_collect(
+    async def _call_collect(
         self, name: str, handlers: list[Callable], kwargs: dict,
     ) -> list[Any]:
-        results: list[Any] = []
-        for handler in handlers:
-            try:
-                ret = handler(**kwargs)
-                if ret is not None:
-                    results.append(ret)
-            except Exception:
-                logger.exception("hook %s handler %s failed", name, handler)
-        return results
+        tasks = [self._safe_call(handler, kwargs) for handler in handlers]
+        results = await asyncio.gather(*tasks)
+        return [r for r in results if r is not None]

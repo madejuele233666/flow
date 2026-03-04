@@ -5,10 +5,17 @@
 - 工厂模式：通过配置字符串解析具体实现类，不硬编码 import。
 - 其他模块互不感知彼此的存在，全部通过此处组装 + 事件总线通信。
 - 测试时可替换任意组件为 mock。
+
+Phase 4 升级：
+- HookManager 接收配置化的超时/熔断阈值（零 Magic Numbers）
+- PluginContext 替代直接暴露 FlowApp 给插件
+- MarkdownTaskRepository 支持文件锁
+- safe_mode / --safe-mode 全局跳过第三方插件
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -19,6 +26,7 @@ from flow_engine.events import EventBus, EventType
 from flow_engine.hooks import HookManager
 from flow_engine.notifications.base import NotificationService, NotifyLevel
 from flow_engine.notifications.terminal import TerminalNotifier
+from flow_engine.plugins.context import PluginContext
 from flow_engine.plugins.registry import PluginRegistry
 from flow_engine.scheduler.factors import CompositeRanker, build_default_factors
 from flow_engine.scheduler.gravity import StubAdvisor, StubBreaker
@@ -54,6 +62,14 @@ def _create_repo(config: AppConfig) -> TaskRepository:
     if cls is None:
         logger.warning("unknown storage backend '%s', falling back to markdown", backend)
         cls = MarkdownTaskRepository
+
+    # 如果是 MarkdownTaskRepository, 注入文件锁配置
+    if cls is MarkdownTaskRepository:
+        return cls(
+            config.paths.tasks_path,
+            lock_enabled=config.file_lock.enabled,
+            lock_timeout=config.file_lock.timeout_seconds,
+        )
     return cls(config.paths.tasks_path)
 
 
@@ -76,7 +92,7 @@ class FlowApp:
     1. 加载配置
     2. 实例化所有模块并注入依赖
     3. 连接事件总线 + 钩子系统
-    4. 自动发现并初始化插件
+    4. 通过 PluginContext 安全初始化插件
     5. 暴露统一的服务属性供 CLI 调用
 
     用法:
@@ -87,14 +103,21 @@ class FlowApp:
     def __init__(self, config: AppConfig | None = None) -> None:
         # ── 配置 ──
         self.config = config or load_config()
+        breaker_cfg = self.config.plugin_breaker
 
         # ── 事件总线（解耦核心） ──
         self.bus = EventBus()
 
-        # ── 钩子系统（pluggy 模式） ──
-        self.hooks = HookManager()
+        # ── 钩子系统（pluggy 模式 + 熔断器保护） ──
+        # 全部阈值从 PluginBreakerConfig 注入，零 Magic Numbers
+        self.hooks = HookManager(
+            hook_timeout=breaker_cfg.hook_timeout_seconds,
+            failure_threshold=breaker_cfg.failure_threshold,
+            recovery_timeout=breaker_cfg.recovery_timeout_seconds,
+            safe_mode=breaker_cfg.safe_mode,
+        )
 
-        # ── 存储层（工厂模式） ──
+        # ── 存储层（工厂模式 + 文件锁） ──
         self.repo: TaskRepository = _create_repo(self.config)
         self.vcs: VersionControl = GitLedger(
             self.config.paths.data_dir,
@@ -139,10 +162,21 @@ class FlowApp:
         self.templates.register_builtins()
         self.templates.load_user_templates(self.config.paths.templates_path)
 
-        # ── 插件自动发现（最后执行，让插件能访问全部已初始化的子系统） ──
+        # ── 构建 PluginContext（安全沙盒） ──
+        self.plugin_context = PluginContext(
+            config=self.config,
+            hooks=self.hooks,
+            notifications=self.notifications,
+            exporters=self.exporters,
+            ranker=self.ranker,
+            templates=self.templates,
+        )
+
+        # ── 插件自动发现（最后执行，通过安全的 PluginContext 初始化） ──
         self.plugins = PluginRegistry()
-        self.plugins.discover()
-        self.plugins.setup_all(self)
+        if not breaker_cfg.safe_mode:
+            self.plugins.discover()
+            self.plugins.setup_all(self.plugin_context)
 
         # ── 事件连线 ──
         self._wire_events()
@@ -155,22 +189,23 @@ class FlowApp:
         if self.config.notifications.enabled:
             self.bus.subscribe(EventType.TASK_STATE_CHANGED, self._on_notify)
 
-    def _on_state_changed(self, event) -> None:
+    async def _on_state_changed(self, event) -> None:
         """响应状态变更：持久化 + 版本控制."""
-        tasks = self.repo.load_all()
-        self.repo.save_all(tasks)
+        tasks = await self.repo.load_all()
+        await self.repo.save_all(tasks)
         if self.config.git.auto_commit:
             task_id = event.data.get("task_id", "?")
             new_state = event.data.get("new_state", "?")
             state_val = new_state.value if hasattr(new_state, "value") else str(new_state)
-            self.vcs.commit(f"{self.config.git.commit_prefix} task #{task_id} → {state_val}")
+            await asyncio.to_thread(self.vcs.commit, f"{self.config.git.commit_prefix} task #{task_id} → {state_val}")
 
-    def _on_notify(self, event) -> None:
+    async def _on_notify(self, event) -> None:
         """状态变更自动通知."""
         task_id = event.data.get("task_id", "?")
         new_state = event.data.get("new_state", "?")
         state_val = new_state.value if hasattr(new_state, "value") else str(new_state)
-        self.notifications.notify(
+        await asyncio.to_thread(
+            self.notifications.notify,
             title="状态变更",
             body=f"任务 #{task_id} → {state_val}",
             level=NotifyLevel.INFO,
