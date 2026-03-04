@@ -15,10 +15,10 @@
             description="Telegram 通知",
         )
 
-        def setup(self, app):
-            token = app.config.extensions.get("telegram", {}).get("bot_token")
+        def setup(self, ctx: PluginContext):
+            token = ctx.get_extension_config("telegram").get("bot_token")
             self._bot = TelegramBot(token)
-            app.hooks.register(self)
+            ctx.register_hook(self)
 
         def on_after_transition(self, task, old_state, new_state):
             self._bot.send(f"{task.title}: {old_state} → {new_state}")
@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from flow_engine.app import FlowApp
+    from flow_engine.plugins.context import PluginContext
 
 logger = logging.getLogger(__name__)
 
@@ -73,22 +73,24 @@ class FlowPlugin(ABC):
 
     子类必须：
     1. 定义类属性 `manifest: PluginManifest`
-    2. 实现 `setup(app)` 方法
+    2. 实现 `setup(ctx)` 方法
 
-    在 setup 中通过 app 引用可以：
-    - app.hooks.register(self)            # 注册钩子
-    - app.notifications.register(...)     # 注册通知后端
-    - app.exporters.register(...)         # 注册导出格式
-    - app.ranker.add_factor(...)          # 注册排序因子
-    - app.cli_group.add_command(...)      # 注册 CLI 命令
+    在 setup 中通过 PluginContext 可以：
+    - ctx.register_hook(self)             # 注册钩子
+    - ctx.register_notifier(...)          # 注册通知后端
+    - ctx.register_exporter(...)          # 注册导出格式
+    - ctx.register_factor(...)            # 注册排序因子
+    - ctx.register_template(...)          # 注册模板
+    - ctx.get_extension_config('name')    # 获取插件配置
     """
 
     manifest: PluginManifest = PluginManifest(name="unnamed")
 
-    def setup(self, app: FlowApp) -> None:
-        """插件初始化 — 通过 app 注入获取整个系统.
+    def setup(self, ctx: PluginContext) -> None:
+        """插件初始化 — 通过 PluginContext 安全沙盒与系统交互.
 
         类似 Obsidian 的 onload() / VSCode 的 activate()。
+        ctx 只暴露注册 API，不暴露底层内部状态。
         """
 
     def teardown(self) -> None:
@@ -166,11 +168,11 @@ class PluginRegistry:
             logger.info("auto-discovered %d plugins: %s", len(discovered), discovered)
         return discovered
 
-    def setup_all(self, app: FlowApp) -> None:
-        """对所有已注册的插件调用 setup(app)."""
+    def setup_all(self, ctx: PluginContext) -> None:
+        """对所有已注册的插件调用 setup(ctx)."""
         for name, plugin in self._plugins.items():
             try:
-                plugin.setup(app)
+                plugin.setup(ctx)
                 logger.info("plugin %s setup complete", name)
             except Exception:
                 logger.exception("plugin %s setup failed", name)

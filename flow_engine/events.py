@@ -17,6 +17,9 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Protocol
 
+import asyncio
+import inspect
+
 logger = logging.getLogger(__name__)
 
 
@@ -98,16 +101,25 @@ class EventBus:
         if handler in handlers:
             handlers.remove(handler)
 
-    def emit(self, event_type: EventType, data: dict[str, Any] | None = None) -> None:
-        """发布事件，同步通知所有订阅者."""
+    async def emit(self, event_type: EventType, data: dict[str, Any] | None = None) -> None:
+        """发布事件，异步并发通知所有订阅者."""
         event = Event(type=event_type, data=data or {})
         handlers = self._subscribers.get(event_type, [])
         logger.debug("emit %s → %d handlers", event_type.value, len(handlers))
-        for handler in handlers:
+        
+        if not handlers:
+            return
+
+        async def _run_handler(h: Callable) -> None:
             try:
-                handler(event)
+                if inspect.iscoroutinefunction(h):
+                    await h(event)
+                else:
+                    await asyncio.to_thread(h, event)
             except Exception:
-                logger.exception("handler %s failed for %s", handler.__qualname__, event_type.value)
+                logger.exception("handler %s failed for %s", h.__qualname__, event_type.value)
+
+        await asyncio.gather(*[_run_handler(h) for h in handlers])
 
     def clear(self) -> None:
         """清空全部订阅（主要用于测试）."""

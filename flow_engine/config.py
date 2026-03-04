@@ -113,6 +113,31 @@ class StorageConfig:
 
 
 @dataclass
+class PluginBreakerConfig:
+    """插件熔断器配置 — 消灭 Magic Numbers.
+
+    所有超时/阈值参数均通过此配置注入，不在业务代码中硬编码。
+    对应 TOML 配置节: [plugins.breaker]
+    """
+
+    hook_timeout_seconds: float = 0.5          # 单次 Hook 执行超时
+    failure_threshold: int = 5                 # 连续失败次数触发熔断
+    recovery_timeout_seconds: float = 60.0     # 熔断后的恢复冷却期
+    safe_mode: bool = False                    # 全局安全模式：跳过所有第三方插件
+
+
+@dataclass
+class FileLockConfig:
+    """文件锁配置.
+
+    对应 TOML 配置节: [file_lock]
+    """
+
+    enabled: bool = True
+    timeout_seconds: float = 10.0              # 等待文件锁的超时时间
+
+
+@dataclass
 class AppConfig:
     """应用顶层配置 — 聚合所有子配置."""
 
@@ -124,6 +149,8 @@ class AppConfig:
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
+    plugin_breaker: PluginBreakerConfig = field(default_factory=PluginBreakerConfig)
+    file_lock: FileLockConfig = field(default_factory=FileLockConfig)
     extensions: dict[str, Any] = field(default_factory=dict)  # 插件开放配置
 
 
@@ -156,6 +183,8 @@ def _apply_dict(config: AppConfig, raw: dict[str, Any]) -> AppConfig:
         "scheduler": config.scheduler,
         "notifications": config.notifications,
         "storage": config.storage,
+        "plugin_breaker": config.plugin_breaker,
+        "file_lock": config.file_lock,
     }
     # 开放式 extensions 透传（不做字段校验）
     if "extensions" in raw:

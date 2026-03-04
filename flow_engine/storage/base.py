@@ -18,30 +18,32 @@ class TaskRepository(ABC):
     """任务仓库抽象接口 — 所有存储实现的合约."""
 
     @abstractmethod
-    def load_all(self) -> list[Task]:
+    async def load_all(self) -> list[Task]:
         """加载全部任务."""
 
     @abstractmethod
-    def save_all(self, tasks: list[Task]) -> None:
+    async def save_all(self, tasks: list[Task]) -> None:
         """保存全部任务（原子覆盖写入）."""
 
     @abstractmethod
-    def next_id(self) -> int:
+    async def next_id(self) -> int:
         """返回下一个可用的任务 ID."""
 
     # ── 便捷查询（默认实现，子类可优化） ──
 
-    def get_by_id(self, task_id: int) -> Task | None:
+    async def get_by_id(self, task_id: int) -> Task | None:
         """按 ID 查找任务."""
-        return next((t for t in self.load_all() if t.id == task_id), None)
+        tasks = await self.load_all()
+        return next((t for t in tasks if t.id == task_id), None)
 
-    def get_by_state(self, state: TaskState) -> list[Task]:
+    async def get_by_state(self, state: TaskState) -> list[Task]:
         """按状态筛选任务."""
-        return [t for t in self.load_all() if t.state == state]
+        tasks = await self.load_all()
+        return [t for t in tasks if t.state == state]
 
-    def get_active(self) -> Task | None:
+    async def get_active(self) -> Task | None:
         """获取当前唯一处于 In Progress 的任务."""
-        active = self.get_by_state(TaskState.IN_PROGRESS)
+        active = await self.get_by_state(TaskState.IN_PROGRESS)
         return active[0] if active else None
 
 

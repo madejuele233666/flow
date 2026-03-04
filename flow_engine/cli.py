@@ -21,9 +21,10 @@
 from __future__ import annotations
 
 import sys
+import asyncio
 from datetime import datetime
 
-import click
+import asyncclick as click
 
 from flow_engine.app import FlowApp
 from flow_engine.state.machine import TaskState
@@ -46,7 +47,7 @@ def _get_app() -> FlowApp:
 
 @click.group()
 @click.version_option(package_name="flow-engine")
-def main() -> None:
+async def main() -> None:
     """心流引擎 (Flow Engine) — 用严苛的单任务协议对抗多任务焦虑."""
 
 
@@ -92,7 +93,7 @@ _discover_plugin_commands()
 @click.option("--p", "priority", default=2, type=click.IntRange(0, 3), help="优先级 P0-P3")
 @click.option("--tag", multiple=True, help="标签（可多次指定）")
 @click.option("--template", "template_name", default=None, help="使用模板创建")
-def add(title: str, ddl: str | None, priority: int, tag: tuple[str, ...], template_name: str | None) -> None:
+async def add(title: str, ddl: str | None, priority: int, tag: tuple[str, ...], template_name: str | None) -> None:
     """添加新任务."""
     app = _get_app()
 
@@ -103,35 +104,35 @@ def add(title: str, ddl: str | None, priority: int, tag: tuple[str, ...], templa
             click.echo(f"❌ 未找到模板: {template_name}")
             click.echo(f"可用模板: {', '.join(n for n, _ in app.templates.list_all())}")
             raise SystemExit(1)
-        base_id = app.repo.next_id()
+        base_id = await app.repo.next_id()
         output = tmpl.create(
             base_id=base_id,
             title=title,
             priority=priority,
             ddl=datetime.strptime(ddl, "%Y-%m-%d") if ddl else None,
         )
-        tasks = app.repo.load_all()
+        tasks = await app.repo.load_all()
         tasks.extend(output.tasks)
-        app.repo.save_all(tasks)
+        await app.repo.save_all(tasks)
         if app.config.git.auto_commit:
-            app.vcs.commit(f"{app.config.git.commit_prefix} add template:{template_name}")
+            await asyncio.to_thread(app.vcs.commit, f"{app.config.git.commit_prefix} add template:{template_name}")
         for t in output.tasks:
             click.echo(f"  ✅ #{t.id} [P{t.priority}] {t.title}")
         click.echo(f"📋 模板 [{template_name}] 创建了 {len(output.tasks)} 个任务")
         return
 
     task = Task(
-        id=app.repo.next_id(),
+        id=await app.repo.next_id(),
         title=title,
         priority=priority,
         ddl=datetime.strptime(ddl, "%Y-%m-%d") if ddl else None,
         tags=list(tag),
     )
-    tasks = app.repo.load_all()
+    tasks = await app.repo.load_all()
     tasks.append(task)
-    app.repo.save_all(tasks)
+    await app.repo.save_all(tasks)
     if app.config.git.auto_commit:
-        app.vcs.commit(f"{app.config.git.commit_prefix} add #{task.id} {task.title}")
+        await asyncio.to_thread(app.vcs.commit, f"{app.config.git.commit_prefix} add #{task.id} {task.title}")
 
     click.echo(f"✅ 已添加: #{task.id} [P{priority}] {title}")
 
@@ -145,10 +146,10 @@ def add(title: str, ddl: str | None, priority: int, tag: tuple[str, ...], templa
 @click.option("--state", "filter_state", default=None, help="按状态筛选")
 @click.option("--tag", "filter_tag", default=None, help="按标签筛选")
 @click.option("--p", "filter_priority", default=None, help="按优先级筛选 (如 0-1)")
-def ls(show_all: bool, filter_state: str | None, filter_tag: str | None, filter_priority: str | None) -> None:
+async def ls(show_all: bool, filter_state: str | None, filter_tag: str | None, filter_priority: str | None) -> None:
     """列出任务（按引力得分排序）."""
     app = _get_app()
-    tasks = app.repo.load_all()
+    tasks = await app.repo.load_all()
 
     # 应用过滤器
     from flow_engine.storage.filters import TaskFilter
@@ -198,23 +199,23 @@ def ls(show_all: bool, filter_state: str | None, filter_tag: str | None, filter_
 
 @main.command()
 @click.argument("task_id", type=int)
-def start(task_id: int) -> None:
+async def start(task_id: int) -> None:
     """开始执行任务（自动暂停当前活跃任务）."""
     app = _get_app()
-    tasks = app.repo.load_all()
+    tasks = await app.repo.load_all()
     task = _find_task(tasks, task_id)
 
-    paused = app.engine.ensure_single_active(tasks, task_id)
+    paused = await app.engine.ensure_single_active(tasks, task_id)
     for p in paused:
         click.echo(f"⏸️  已自动暂停: #{p.id} {p.title}")
         if app.config.context.capture_on_switch:
-            app.context.capture(p.id)
+            await asyncio.to_thread(app.context.capture, p.id)
 
-    app.engine.transition(task, TaskState.IN_PROGRESS)
+    await app.engine.transition(task, TaskState.IN_PROGRESS)
     task.started_at = datetime.now()
-    app.repo.save_all(tasks)
+    await app.repo.save_all(tasks)
 
-    snapshot = app.context.restore_latest(task_id)
+    snapshot = await asyncio.to_thread(app.context.restore_latest, task_id)
     if snapshot and snapshot.active_window:
         click.echo(f"📸 上次现场: {snapshot.active_window}")
 
@@ -226,10 +227,10 @@ def start(task_id: int) -> None:
 # ---------------------------------------------------------------------------
 
 @main.command()
-def status() -> None:
+async def status() -> None:
     """查看当前活跃任务与专注时长."""
     app = _get_app()
-    active = app.repo.get_active()
+    active = await app.repo.get_active()
     if not active:
         click.echo("😴 当前没有进行中的任务，使用 flow start <id> 开始")
         return
@@ -253,17 +254,17 @@ def status() -> None:
 # ---------------------------------------------------------------------------
 
 @main.command()
-def done() -> None:
+async def done() -> None:
     """完成当前活跃任务."""
     app = _get_app()
-    tasks = app.repo.load_all()
+    tasks = await app.repo.load_all()
     active = next((t for t in tasks if t.is_active), None)
     if not active:
         click.echo("❌ 当前没有进行中的任务")
         return
 
-    app.engine.transition(active, TaskState.DONE)
-    app.repo.save_all(tasks)
+    await app.engine.transition(active, TaskState.DONE)
+    await app.repo.save_all(tasks)
     click.echo(f"🎉 已完成: #{active.id} {active.title}")
 
 
@@ -272,20 +273,20 @@ def done() -> None:
 # ---------------------------------------------------------------------------
 
 @main.command()
-def pause() -> None:
+async def pause() -> None:
     """暂停当前活跃任务."""
     app = _get_app()
-    tasks = app.repo.load_all()
+    tasks = await app.repo.load_all()
     active = next((t for t in tasks if t.is_active), None)
     if not active:
         click.echo("❌ 当前没有进行中的任务")
         return
 
     if app.config.context.capture_on_switch:
-        app.context.capture(active.id)
+        await asyncio.to_thread(app.context.capture, active.id)
 
-    app.engine.transition(active, TaskState.PAUSED)
-    app.repo.save_all(tasks)
+    await app.engine.transition(active, TaskState.PAUSED)
+    await app.repo.save_all(tasks)
     click.echo(f"⏸️  已暂停: #{active.id} {active.title}")
 
 
@@ -296,15 +297,15 @@ def pause() -> None:
 @main.command()
 @click.argument("task_id", type=int)
 @click.option("--reason", default="", help="阻塞原因")
-def block(task_id: int, reason: str) -> None:
+async def block(task_id: int, reason: str) -> None:
     """将任务标记为阻塞状态."""
     app = _get_app()
-    tasks = app.repo.load_all()
+    tasks = await app.repo.load_all()
     task = _find_task(tasks, task_id)
 
-    app.engine.transition(task, TaskState.BLOCKED)
+    await app.engine.transition(task, TaskState.BLOCKED)
     task.block_reason = reason
-    app.repo.save_all(tasks)
+    await app.repo.save_all(tasks)
     click.echo(f"🚧 已阻塞: #{task.id} {task.title}" + (f" (原因: {reason})" if reason else ""))
 
 
@@ -314,24 +315,24 @@ def block(task_id: int, reason: str) -> None:
 
 @main.command()
 @click.argument("task_id", type=int)
-def resume(task_id: int) -> None:
+async def resume(task_id: int) -> None:
     """恢复暂停或阻塞的任务."""
     app = _get_app()
-    tasks = app.repo.load_all()
+    tasks = await app.repo.load_all()
     task = _find_task(tasks, task_id)
 
     if task.state == TaskState.BLOCKED:
-        app.engine.transition(task, TaskState.READY)
+        await app.engine.transition(task, TaskState.READY)
         task.block_reason = ""
-        app.repo.save_all(tasks)
+        await app.repo.save_all(tasks)
         click.echo(f"🔓 已解除阻塞: #{task.id}，使用 flow start {task.id} 继续")
     elif task.state == TaskState.PAUSED:
-        paused = app.engine.ensure_single_active(tasks, task_id)
+        paused = await app.engine.ensure_single_active(tasks, task_id)
         for p in paused:
             click.echo(f"⏸️  已自动暂停: #{p.id} {p.title}")
-        app.engine.transition(task, TaskState.IN_PROGRESS)
+        await app.engine.transition(task, TaskState.IN_PROGRESS)
         task.started_at = datetime.now()
-        app.repo.save_all(tasks)
+        await app.repo.save_all(tasks)
         click.echo(f"▶️  已恢复: #{task.id} {task.title}")
     else:
         click.echo(f"❌ 任务 #{task.id} 当前状态为 {task.state.value}，无法恢复")
@@ -343,10 +344,10 @@ def resume(task_id: int) -> None:
 
 @main.command()
 @click.argument("task_id", type=int)
-def breakdown(task_id: int) -> None:
+async def breakdown(task_id: int) -> None:
     """[AI] 拆解任务为小步骤."""
     app = _get_app()
-    task = _find_task(app.repo.load_all(), task_id)
+    task = _find_task(await app.repo.load_all(), task_id)
     steps = app.breaker.breakdown(task)
     click.echo(f"📋 任务拆解: #{task.id} {task.title}")
     for i, step in enumerate(steps, 1):
@@ -360,7 +361,7 @@ def breakdown(task_id: int) -> None:
 @main.command()
 @click.option("--format", "fmt", default="json", help="导出格式 (json / csv)")
 @click.option("--all", "show_all", is_flag=True, help="包含已完成/取消的任务")
-def export(fmt: str, show_all: bool) -> None:
+async def export(fmt: str, show_all: bool) -> None:
     """导出任务数据."""
     app = _get_app()
     exporter = app.exporters.get(fmt)
@@ -369,7 +370,7 @@ def export(fmt: str, show_all: bool) -> None:
         click.echo(f"可用格式: {', '.join(app.exporters.list_formats())}")
         raise SystemExit(1)
 
-    tasks = app.repo.load_all()
+    tasks = await app.repo.load_all()
     if not show_all:
         tasks = [t for t in tasks if not t.is_terminal]
 
@@ -382,12 +383,12 @@ def export(fmt: str, show_all: bool) -> None:
 # ---------------------------------------------------------------------------
 
 @main.group()
-def templates() -> None:
+async def templates() -> None:
     """任务模板管理."""
 
 
 @templates.command("ls")
-def templates_ls() -> None:
+async def templates_ls() -> None:
     """列出可用模板."""
     app = _get_app()
     all_templates = app.templates.list_all()
@@ -404,12 +405,12 @@ def templates_ls() -> None:
 # ---------------------------------------------------------------------------
 
 @main.group()
-def plugins() -> None:
+async def plugins() -> None:
     """插件管理."""
 
 
 @plugins.command("ls")
-def plugins_ls() -> None:
+async def plugins_ls() -> None:
     """列出已注册插件."""
     app = _get_app()
     names = app.plugins.names()
@@ -451,4 +452,4 @@ def _state_icon(state: TaskState) -> str:
 
 
 if __name__ == "__main__":
-    main()
+    main(_anyio_backend="asyncio")

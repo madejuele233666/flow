@@ -46,7 +46,7 @@ class TransitionEngine:
         self._bus = event_bus
         self._hooks = hook_mgr
 
-    def transition(self, task: Task, target: TaskState) -> Task:
+    async def transition(self, task: Task, target: TaskState) -> Task:
         """将 task 的状态转移到 target.
 
         执行流程：
@@ -68,7 +68,7 @@ class TransitionEngine:
         """
         # ── 1. before 钩子 (waterfall: 可修改 target) ──
         if self._hooks:
-            hook_result = self._hooks.call(
+            hook_result = await self._hooks.call(
                 "on_before_transition",
                 task=task, target_state=target,
             )
@@ -80,7 +80,7 @@ class TransitionEngine:
         if not can_transition(task.state, target):
             error = IllegalTransitionError(task.state, target)
             if self._hooks:
-                self._hooks.call(
+                await self._hooks.call(
                     "on_transition_error",
                     task=task, target_state=target, error=error,
                 )
@@ -102,14 +102,14 @@ class TransitionEngine:
 
         # ── 5. after 钩子 (parallel: 全部通知) ──
         if self._hooks:
-            self._hooks.call(
+            await self._hooks.call(
                 "on_after_transition",
                 task=task, old_state=old_state, new_state=target,
             )
 
         return task
 
-    def ensure_single_active(
+    async def ensure_single_active(
         self,
         all_tasks: list[Task],
         new_active_id: int,
@@ -126,6 +126,6 @@ class TransitionEngine:
         paused: list[Task] = []
         for task in all_tasks:
             if task.state == TaskState.IN_PROGRESS and task.id != new_active_id:
-                self.transition(task, TaskState.PAUSED)
+                await self.transition(task, TaskState.PAUSED)
                 paused.append(task)
         return paused
