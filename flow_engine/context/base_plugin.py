@@ -1,5 +1,11 @@
 """上下文捕获插件抽象基类 + 快照管理.
 
+Phase 5 升级：
+- ContextPlugin 合约升级为全异步（async capture / async available）
+- ContextService.capture_async 支持并发聚合多插件
+- 快照序列化与反序列化保持纯同步（文件 I/O 由调用方选择线程化）
+- 全部插件的外部调用由上层（app.py）决定走前台还是后台队列
+
 设计要点：
 - ContextPlugin 是所有捕获插件的合约（ActivityWatch、自定义等）。
 - SnapshotManager 负责序列化/反序列化，不关心数据来源。
@@ -8,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from abc import ABC, abstractmethod
@@ -33,18 +40,35 @@ class Snapshot:
     active_url: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
+    @staticmethod
+    def build(task_id: int, raw: dict[str, Any]) -> Snapshot:
+        """从插件聚合的原始字典构建快照（工厂方法）.
+
+        自动提取已知核心字段，将剩余字段归入 extra。
+        新增核心字段时只需修改此方法，外部调用方无感。
+        """
+        data = dict(raw)  # 浅拷贝，避免破坏调用方的数据
+        return Snapshot(
+            task_id=task_id,
+            active_window=data.pop("active_window", ""),
+            active_url=data.pop("active_url", ""),
+            extra=data,
+        )
+
 
 # ---------------------------------------------------------------------------
-# 插件抽象基类
+# 插件抽象基类 — 全异步合约
 # ---------------------------------------------------------------------------
 
 class ContextPlugin(ABC):
     """上下文捕获插件合约.
 
+    Phase 5 升级：所有方法升级为 async，消除同步 I/O 阻塞主事件循环。
+
     所有插件必须实现：
     - name: 插件标识符
-    - capture: 捕获当前桌面上下文
-    - available: 检测插件是否可用（如 ActivityWatch 是否在运行）
+    - capture: 异步捕获当前桌面上下文
+    - available: 异步检测插件是否可用
     """
 
     @property
@@ -53,12 +77,12 @@ class ContextPlugin(ABC):
         """插件标识名."""
 
     @abstractmethod
-    def available(self) -> bool:
-        """检测插件是否可用（依赖服务是否在线等）."""
+    async def available(self) -> bool:
+        """异步检测插件是否可用（依赖服务是否在线等）."""
 
     @abstractmethod
-    def capture(self) -> dict[str, Any]:
-        """捕获当前上下文，返回键值对数据.
+    async def capture(self) -> dict[str, Any]:
+        """异步捕获当前上下文，返回键值对数据.
 
         Returns:
             插件捕获的数据字典，至少可包含 active_window / active_url。
@@ -70,7 +94,10 @@ class ContextPlugin(ABC):
 # ---------------------------------------------------------------------------
 
 class SnapshotManager:
-    """快照的序列化与反序列化."""
+    """快照的序列化与反序列化.
+
+    纯文件 I/O，保持同步。调用方可自行决定用 asyncio.to_thread 包裹。
+    """
 
     def __init__(self, snapshots_dir: Path) -> None:
         self._dir = snapshots_dir
@@ -111,19 +138,23 @@ class SnapshotManager:
 
 
 # ---------------------------------------------------------------------------
-# 上下文服务 — 聚合多个插件
+# 上下文服务 — 聚合多个异步插件
 # ---------------------------------------------------------------------------
 
 class ContextService:
     """物理层对外的唯一服务接口.
 
-    聚合所有已注册的插件，按优先级合并捕获结果。
+    聚合所有已注册的异步插件，并发捕获结果后合并。
+
+    Phase 5 变更：
+    - capture_async() 替代旧同步 capture()，全流程不阻塞
+    - 每个插件的 capture 互相隔离，单一插件爆炸不影响其余
+    - 快照保存委托给 asyncio.to_thread，解放事件循环
 
     用法:
         svc = ContextService(snapshot_mgr)
         svc.register(AWPlugin(...))
-        svc.register(MyCustomPlugin(...))
-        snapshot = svc.capture(task_id=1)
+        snapshot = await svc.capture_async(task_id=1)
     """
 
     def __init__(self, snapshot_manager: SnapshotManager) -> None:
@@ -135,24 +166,32 @@ class ContextService:
         self._plugins.append(plugin)
         logger.info("context plugin registered: %s", plugin.name)
 
-    def capture(self, task_id: int) -> Snapshot:
-        """聚合所有可用插件的捕获结果，返回合并的快照."""
-        merged: dict[str, Any] = {}
-        for plugin in self._plugins:
-            if plugin.available():
-                try:
-                    data = plugin.capture()
-                    merged.update(data)
-                except Exception:
-                    logger.exception("plugin %s capture failed", plugin.name)
+    async def capture_async(self, task_id: int) -> Snapshot:
+        """并发聚合所有可用插件的捕获结果，返回合并的快照.
 
-        snapshot = Snapshot(
-            task_id=task_id,
-            active_window=merged.pop("active_window", ""),
-            active_url=merged.pop("active_url", ""),
-            extra=merged,  # 剩余字段全部归入 extra
+        每个插件互相隔离执行，单个失败不影响其余。
+        """
+        merged: dict[str, Any] = {}
+
+        async def _try_capture(plugin: ContextPlugin) -> dict[str, Any]:
+            """安全地尝试捕获单个插件的上下文."""
+            try:
+                if await plugin.available():
+                    return await plugin.capture()
+            except Exception:
+                logger.exception("plugin %s capture failed", plugin.name)
+            return {}
+
+        # 全部插件并发执行，互不阻塞
+        results = await asyncio.gather(
+            *[_try_capture(p) for p in self._plugins],
         )
-        self._manager.save(snapshot)
+        for data in results:
+            merged.update(data)
+
+        snapshot = Snapshot.build(task_id, merged)
+        # 快照落盘走线程池，不阻塞事件循环
+        await asyncio.to_thread(self._manager.save, snapshot)
         return snapshot
 
     def restore_latest(self, task_id: int) -> Snapshot | None:

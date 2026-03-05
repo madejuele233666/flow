@@ -11,6 +11,10 @@ Phase 4 升级：
 - PluginContext 替代直接暴露 FlowApp 给插件
 - MarkdownTaskRepository 支持文件锁
 - safe_mode / --safe-mode 全局跳过第三方插件
+
+Phase 5 升级：
+- BackgroundEventWorker 驱动非关键路径事件（通知、快照等）
+- 通知事件改为后台 Fire-and-Forget，绝不阻塞主业务
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ from typing import Any
 from flow_engine.config import AppConfig, load_config
 from flow_engine.context.aw_plugin import ActivityWatchPlugin
 from flow_engine.context.base_plugin import ContextService, SnapshotManager
-from flow_engine.events import EventBus, EventType
+from flow_engine.events import BackgroundEventWorker, EventBus, EventType
 from flow_engine.hooks import HookManager
 from flow_engine.notifications.base import NotificationService, NotifyLevel
 from flow_engine.notifications.terminal import TerminalNotifier
@@ -34,6 +38,7 @@ from flow_engine.state.transitions import TransitionEngine
 from flow_engine.storage.base import TaskRepository, VersionControl
 from flow_engine.storage.exporters import CsvExporter, ExporterRegistry, JsonExporter
 from flow_engine.storage.git_ledger import GitLedger
+from flow_engine.storage.frontmatter_io import FrontmatterTaskRepository
 from flow_engine.storage.markdown_io import MarkdownTaskRepository
 from flow_engine.templates.base import TemplateRegistry
 
@@ -46,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 _STORAGE_BACKENDS: dict[str, type] = {
     "markdown": MarkdownTaskRepository,
-    # 未来: "json": JsonTaskRepository, "sqlite": SqliteTaskRepository
+    "frontmatter": FrontmatterTaskRepository,
 }
 
 _NOTIFIER_BACKENDS: dict[str, type] = {
@@ -105,8 +110,12 @@ class FlowApp:
         self.config = config or load_config()
         breaker_cfg = self.config.plugin_breaker
 
-        # ── 事件总线（解耦核心） ──
-        self.bus = EventBus()
+        # ── 后台事件工作器 (Phase 5: 非关键路径的 Fire-and-Forget) ──
+        self._bg_worker = BackgroundEventWorker(max_retries=2)
+        self._bg_worker.start()
+
+        # ── 事件总线（解耦核心，注入后台工作器） ──
+        self.bus = EventBus(background_worker=self._bg_worker)
 
         # ── 钩子系统（pluggy 模式 + 熔断器保护） ──
         # 全部阈值从 PluginBreakerConfig 注入，零 Magic Numbers
@@ -186,8 +195,12 @@ class FlowApp:
     def _wire_events(self) -> None:
         """连接跨模块的事件处理器."""
         self.bus.subscribe(EventType.TASK_STATE_CHANGED, self._on_state_changed)
+        # 通知在非关键路径，使用后台事件广播
         if self.config.notifications.enabled:
-            self.bus.subscribe(EventType.TASK_STATE_CHANGED, self._on_notify)
+            self.bus.subscribe(EventType.TASK_STATE_CHANGED, self._on_notify_bg)
+        # 上下文捕获走后台队列 — 绝不阻塞主业务
+        if self.config.context.capture_on_switch:
+            self.bus.subscribe(EventType.TASK_STATE_CHANGED, self._on_capture_context_bg)
 
     async def _on_state_changed(self, event) -> None:
         """响应状态变更：持久化 + 版本控制."""
@@ -199,21 +212,32 @@ class FlowApp:
             state_val = new_state.value if hasattr(new_state, "value") else str(new_state)
             await asyncio.to_thread(self.vcs.commit, f"{self.config.git.commit_prefix} task #{task_id} → {state_val}")
 
-    async def _on_notify(self, event) -> None:
-        """状态变更自动通知."""
+    def _on_notify_bg(self, event) -> None:
+        """状态变更自动通知 — 同步回调，由后台 Worker 驱动."""
         task_id = event.data.get("task_id", "?")
         new_state = event.data.get("new_state", "?")
         state_val = new_state.value if hasattr(new_state, "value") else str(new_state)
-        await asyncio.to_thread(
-            self.notifications.notify,
+        self.notifications.notify(
             title="状态变更",
             body=f"任务 #{task_id} → {state_val}",
             level=NotifyLevel.INFO,
         )
 
-    def shutdown(self) -> None:
-        """优雅关闭 — 清理插件资源."""
+    async def shutdown(self) -> None:
+        """优雅关闭 — 清理插件资源并等待后台队列排空."""
         self.plugins.teardown_all()
+        await self._bg_worker.stop()
+
+    def _on_capture_context_bg(self, event) -> None:
+        """状态变更时异步捕获上下文快照 — 由后台 Worker 驱动.
+
+        这是一个同步回调，但实际的 async capture 由
+        BackgroundEventWorker 在其消费循环中异步执行。
+        """
+        task_id = event.data.get("task_id")
+        if task_id is not None:
+            # 利用 ensure_future 启动异步捕获，不阻塞当前事件回调
+            asyncio.ensure_future(self.context.capture_async(task_id))
 
     # ── 工厂注册 API（供插件扩展） ──
 
