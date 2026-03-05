@@ -1,14 +1,18 @@
 """可插拔引力因子系统 + 组合式排序器.
 
-设计来源：
-- 原 GravityRanker 硬编码 3 因子 → 重构为可插拔因子列表
-- 用户可通过配置调整权重，通过插件添加新因子
+设计来源:
+- 原 GravityRanker 硬编码 3 因子, 重构为可插拔因子列表
+- Phase 4: 因子与曲线完全解耦 (Strategy Pattern)
+  - 因子负责 属性->进度值 的映射
+  - 曲线负责 进度值->迫切度 的映射
+  - 两者通过构造器注入组合, 完全正交
 
-用法：
+用法:
+    from flow_engine.scheduler.curves import ExponentialCurve
+
     ranker = CompositeRanker()
     ranker.add_factor(PriorityFactor(weight=0.4))
-    ranker.add_factor(DDLFactor(weight=0.4))
-    ranker.add_factor(MyCustomFactor(weight=0.2))
+    ranker.add_factor(DDLFactor(weight=0.4, curve=ExponentialCurve(steepness=8)))
     ranked = ranker.rank(tasks)
 """
 
@@ -20,6 +24,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from flow_engine.scheduler.curves import UrgencyCurve
     from flow_engine.storage.task_model import Task
 
 logger = logging.getLogger(__name__)
@@ -74,7 +79,27 @@ class PriorityFactor(GravityFactor):
 
 
 class DDLFactor(GravityFactor):
-    """DDL 紧迫度因子 — 距离越近分越高."""
+    """DDL 紧迫度因子, 曲线可注入, 公式完全解耦.
+
+    进度计算: remaining / horizon -> progress in [0.0, 1.0]
+    迫切度映射: 由注入的 UrgencyCurve 决定 (默认 ExponentialCurve).
+
+    Args:
+        weight: 因子权重.
+        curve: 迫切度映射曲线 (默认 ExponentialCurve(5.0), 死线前爆发增长).
+        horizon_days: 预见窗口天数 (默认 7), 超出此范围的 DDL 进度为 0.
+    """
+
+    def __init__(
+        self,
+        weight: float = 1.0,
+        curve: UrgencyCurve | None = None,
+        horizon_days: float = 7.0,
+    ) -> None:
+        super().__init__(weight)
+        from flow_engine.scheduler.curves import ExponentialCurve
+        self._curve = curve or ExponentialCurve(steepness=5.0)
+        self._horizon_seconds = horizon_days * 24 * 3600
 
     @property
     def name(self) -> str:
@@ -86,8 +111,8 @@ class DDLFactor(GravityFactor):
         remaining = (task.ddl - datetime.now()).total_seconds()
         if remaining <= 0:
             return 1.0
-        seven_days = 7 * 24 * 3600
-        return max(0.0, 1.0 - remaining / seven_days)
+        progress = max(0.0, 1.0 - remaining / self._horizon_seconds)
+        return self._curve(progress)
 
 
 class TagBoostFactor(GravityFactor):
@@ -110,7 +135,27 @@ class TagBoostFactor(GravityFactor):
 
 
 class AgeFactor(GravityFactor):
-    """任务年龄因子 — 创建越久未完成的任务分越高."""
+    """任务年龄因子, 曲线可注入, 公式完全解耦.
+
+    进度计算: age / horizon -> progress in [0.0, 1.0]
+    迫切度映射: 由注入的 UrgencyCurve 决定 (默认 PolynomialCurve(0.5) = sqrt(x)).
+
+    Args:
+        weight: 因子权重.
+        curve: 迫切度映射曲线 (默认 PolynomialCurve(0.5), 早期增长快后期放缓).
+        horizon_days: 老化窗口天数 (默认 7), 达到后得分封顶.
+    """
+
+    def __init__(
+        self,
+        weight: float = 1.0,
+        curve: UrgencyCurve | None = None,
+        horizon_days: float = 7.0,
+    ) -> None:
+        super().__init__(weight)
+        from flow_engine.scheduler.curves import PolynomialCurve
+        self._curve = curve or PolynomialCurve(exponent=0.5)
+        self._horizon_seconds = horizon_days * 24 * 3600
 
     @property
     def name(self) -> str:
@@ -118,8 +163,8 @@ class AgeFactor(GravityFactor):
 
     def score(self, task: Task) -> float:
         age_seconds = (datetime.now() - task.created_at).total_seconds()
-        seven_days = 7 * 24 * 3600
-        return min(1.0, age_seconds / seven_days)
+        progress = min(1.0, age_seconds / self._horizon_seconds)
+        return self._curve(progress)
 
 
 # ---------------------------------------------------------------------------

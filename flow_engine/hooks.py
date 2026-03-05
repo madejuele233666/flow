@@ -9,11 +9,16 @@ Phase 4 升级：
 - 全部阈值从 PluginBreakerConfig 注入，零 Magic Numbers
 - safe_mode 一键跳过全部第三方钩子
 
+Phase 5 升级：
+- BAIL_VETO 策略：插件返回 False 即可一票否决状态流转
+- before_task_transition 钩子：状态转移的前置拦截点
+
 执行策略：
-- parallel  : 全部执行，互不影响（默认）
-- waterfall : 链式传递，前一个结果传给下一个，可拦截
-- bail      : 第一个非 None 结果胜出，后续跳过
-- collect   : 收集所有返回值为列表
+- parallel   : 全部执行，互不影响（默认）
+- waterfall  : 链式传递，前一个结果传给下一个，可拦截
+- bail       : 第一个非 None 结果胜出，后续跳过
+- bail_veto  : 全部执行，任一返回 False 则否决（一票否决权）
+- collect    : 收集所有返回值为列表
 """
 
 from __future__ import annotations
@@ -35,10 +40,11 @@ logger = logging.getLogger(__name__)
 class HookStrategy(str, Enum):
     """钩子执行策略（借鉴 Webpack Tapable）."""
 
-    PARALLEL = "parallel"      # 全部执行，忽略返回值
-    WATERFALL = "waterfall"    # 链式传递，可修改/拦截
-    BAIL = "bail"              # 第一个非 None 结果胜出
-    COLLECT = "collect"        # 收集所有返回值
+    PARALLEL = "parallel"        # 全部执行，忽略返回值
+    WATERFALL = "waterfall"      # 链式传递，可修改/拦截
+    BAIL = "bail"                # 第一个非 None 结果胜出
+    BAIL_VETO = "bail_veto"      # 全部执行，任一 False 否决
+    COLLECT = "collect"          # 收集所有返回值
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +133,13 @@ HOOK_SPECS: dict[str, HookSpec] = {
         name="on_focus_break",
         strategy=HookStrategy.PARALLEL,
         description="建议休息时通知",
+    ),
+
+    # ── Phase 5: 状态流转拦截 ──
+    "before_task_transition": HookSpec(
+        name="before_task_transition",
+        strategy=HookStrategy.BAIL_VETO,
+        description="状态转移前的一票否决拦截点。返回 False 可阻止转移",
     ),
 }
 
@@ -288,6 +301,8 @@ class HookManager:
             return await self._call_waterfall(hook_name, handlers, kwargs)
         elif strategy == HookStrategy.BAIL:
             return await self._call_bail(hook_name, handlers, kwargs)
+        elif strategy == HookStrategy.BAIL_VETO:
+            return await self._call_bail_veto(hook_name, handlers, kwargs)
         elif strategy == HookStrategy.COLLECT:
             return await self._call_collect(hook_name, handlers, kwargs)
         return None
@@ -327,16 +342,24 @@ class HookManager:
 
     async def _call_waterfall(
         self, name: str, handlers: list[Callable], kwargs: dict,
-    ) -> Any:
-        result = kwargs  # 初始传入参数作为第一轮输入
+    ) -> dict[str, Any]:
+        """瀑布流执行 — 纯函数式 kwargs 更新.
+
+        约定：
+        - handler 始终接收完整的 **current_kwargs。
+        - handler 返回 None → 不修改任何参数。
+        - handler 返回 dict → 合并到 current_kwargs（覆盖同名键）。
+        - 最终返回累积更新后的完整 kwargs 字典。
+
+        调用方按需从返回的字典中取出被修改的值。
+        HookManager 本身不关心具体键名，实现彻底解耦。
+        """
+        current_kwargs = dict(kwargs)  # 浅拷贝，避免污染原始参数
         for handler in handlers:
-            ret = await self._safe_call(
-                handler,
-                result if isinstance(result, dict) else {"value": result},
-            )
-            if ret is not None:
-                result = ret  # 链式传递
-        return result
+            ret = await self._safe_call(handler, current_kwargs)
+            if isinstance(ret, dict):
+                current_kwargs.update(ret)
+        return current_kwargs
 
     async def _call_bail(
         self, name: str, handlers: list[Callable], kwargs: dict,
@@ -353,3 +376,22 @@ class HookManager:
         tasks = [self._safe_call(handler, kwargs) for handler in handlers]
         results = await asyncio.gather(*tasks)
         return [r for r in results if r is not None]
+
+    async def _call_bail_veto(
+        self, name: str, handlers: list[Callable], kwargs: dict,
+    ) -> bool:
+        """一票否决执行 — 全部 handler 并发执行，任一返回 False 即否决.
+
+        设计要点：
+        - 所有 handler 都会被执行（不像 bail 那样早退）。
+        - handler 返回 None 或 True 视为同意；仅返回 False 视为否决。
+        - 返回 True 表示全部通过，False 表示被否决。
+        """
+        tasks = [self._safe_call(handler, kwargs) for handler in handlers]
+        results = await asyncio.gather(*tasks)
+        # 任一 handler 显式返回 False → 否决
+        for result in results:
+            if result is False:
+                logger.info("hook %s vetoed by handler", name)
+                return False
+        return True

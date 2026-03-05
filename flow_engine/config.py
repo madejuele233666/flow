@@ -109,7 +109,7 @@ class NotificationsConfig:
 class StorageConfig:
     """存储后端配置."""
 
-    backend: str = "markdown"  # markdown | json | 自定义
+    backend: str = "frontmatter"  # frontmatter | markdown | 自定义
 
 
 @dataclass
@@ -138,6 +138,17 @@ class FileLockConfig:
 
 
 @dataclass
+class DaemonConfig:
+    """Ghost Daemon 配置.
+
+    对应 TOML 配置节: [daemon]
+    """
+
+    socket_name: str = "daemon.sock"           # Unix Socket 文件名（相对于 data_dir）
+    pid_name: str = "daemon.pid"               # PID 文件名（相对于 data_dir）
+
+
+@dataclass
 class AppConfig:
     """应用顶层配置 — 聚合所有子配置."""
 
@@ -151,6 +162,7 @@ class AppConfig:
     storage: StorageConfig = field(default_factory=StorageConfig)
     plugin_breaker: PluginBreakerConfig = field(default_factory=PluginBreakerConfig)
     file_lock: FileLockConfig = field(default_factory=FileLockConfig)
+    daemon: DaemonConfig = field(default_factory=DaemonConfig)
     extensions: dict[str, Any] = field(default_factory=dict)  # 插件开放配置
 
 
@@ -185,6 +197,7 @@ def _apply_dict(config: AppConfig, raw: dict[str, Any]) -> AppConfig:
         "storage": config.storage,
         "plugin_breaker": config.plugin_breaker,
         "file_lock": config.file_lock,
+        "daemon": config.daemon,
     }
     # 开放式 extensions 透传（不做字段校验）
     if "extensions" in raw:
