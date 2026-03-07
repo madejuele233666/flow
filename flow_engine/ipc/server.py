@@ -1,16 +1,16 @@
 """IPC Server — Daemon 端的 asyncio stream 服务.
 
 设计要点：
-- 基于 asyncio.start_unix_server（Unix Domain Socket），性能最优且天然隔离。
+- 同时监听 Unix Domain Socket（CLI/TUI 本地使用）和 TCP 端口（HUD 跨系统使用）。
 - 每个客户端连接对应一个独立的 asyncio Task，互不阻塞。
 - 通过注入 handler_registry（方法名→处理函数映射表），实现请求路由。
-- 支持 Push 广播：Daemon 的事件总线可通过 broadcast() 向所有活跃客户端推送。
+- 支持 Push 广播：Daemon 的事件总线可通过 broadcast() 向所有活跃客户端（含 TCP）推送。
 - 与 protocol.py 完全解耦：只负责传输，不关心消息语义。
 
-     ┌──────────┐   Unix Socket   ┌──────────┐
-     │ CLI/TUI  │ ◄─────────────► │  Server  │
-     │ (Client) │  ndjson lines   │ (Daemon) │
-     └──────────┘                 └──────────┘
+     ┌──────────┐   Unix Socket   ┌──────────┐   TCP :54321   ┌─────────┐
+     │ CLI/TUI  │ ◄─────────────► │  Server  │ ◄────────────► │   HUD   │
+     │ (WSL)    │  ndjson lines   │ (Daemon) │  ndjson lines  │ (Win)   │
+     └──────────┘                 └──────────┘                └─────────┘
 """
 
 from __future__ import annotations
@@ -43,11 +43,22 @@ class IPCServer:
         await server.stop()
     """
 
-    def __init__(self, socket_path: Path | None = None) -> None:
+    DEFAULT_TCP_HOST = "127.0.0.1"
+    DEFAULT_TCP_PORT = 54321
+
+    def __init__(
+        self,
+        socket_path: Path | None = None,
+        tcp_host: str = DEFAULT_TCP_HOST,
+        tcp_port: int = DEFAULT_TCP_PORT,
+    ) -> None:
         self._socket_path = socket_path or DEFAULT_SOCKET_PATH
+        self._tcp_host = tcp_host
+        self._tcp_port = tcp_port
         self._handlers: dict[str, MethodHandler] = {}
         self._clients: set[asyncio.StreamWriter] = set()
         self._server: asyncio.AbstractServer | None = None
+        self._tcp_server: asyncio.AbstractServer | None = None
 
     # ── 公共 API ──
 
@@ -57,10 +68,9 @@ class IPCServer:
         logger.debug("IPC method registered: %s", method)
 
     async def start(self) -> None:
-        """启动 Unix Domain Socket 服务."""
-        # 确保 Socket 文件所在目录存在
+        """启动 Unix Domain Socket 和 TCP 双服务."""
+        # ── Unix Domain Socket (CLI/TUI 本地使用) ──
         self._socket_path.parent.mkdir(parents=True, exist_ok=True)
-        # 清理可能残留的旧 Socket 文件
         if self._socket_path.exists():
             self._socket_path.unlink()
 
@@ -70,8 +80,19 @@ class IPCServer:
         )
         logger.info("IPC server listening on %s", self._socket_path)
 
+        # ── TCP (跨系统客户端，如 Windows HUD) ──
+        self._tcp_server = await asyncio.start_server(
+            self._handle_connection,
+            host=self._tcp_host,
+            port=self._tcp_port,
+        )
+        logger.info("IPC TCP server listening on %s:%d", self._tcp_host, self._tcp_port)
+
     async def stop(self) -> None:
-        """优雅关闭服务."""
+        """优雅关闭服务（Unix Socket + TCP）."""
+        if self._tcp_server:
+            self._tcp_server.close()
+            await self._tcp_server.wait_closed()
         if self._server:
             self._server.close()
             await self._server.wait_closed()

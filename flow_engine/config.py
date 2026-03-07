@@ -124,6 +124,8 @@ class PluginBreakerConfig:
     failure_threshold: int = 5                 # 连续失败次数触发熔断
     recovery_timeout_seconds: float = 60.0     # 熔断后的恢复冷却期
     safe_mode: bool = False                    # 全局安全模式：跳过所有第三方插件
+    dev_mode: bool = False                     # 开发者模式：插件异常直接抛出，不静默
+    admin_plugins: list[str] = field(default_factory=list)  # 允许获得高权限沙盒的插件名
 
 
 @dataclass
@@ -135,6 +137,17 @@ class FileLockConfig:
 
     enabled: bool = True
     timeout_seconds: float = 10.0              # 等待文件锁的超时时间
+
+
+@dataclass
+class IPCConfig:
+    """IPC 服务配置 — Unix Socket + TCP.
+
+    对应 TOML 配置节: [ipc]
+    """
+
+    tcp_host: str = "127.0.0.1"   # TCP 监听地址 (0.0.0.0 允许和内网其他机器连接)
+    tcp_port: int = 54321          # TCP 监听端口
 
 
 @dataclass
@@ -163,6 +176,7 @@ class AppConfig:
     plugin_breaker: PluginBreakerConfig = field(default_factory=PluginBreakerConfig)
     file_lock: FileLockConfig = field(default_factory=FileLockConfig)
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
+    ipc: IPCConfig = field(default_factory=IPCConfig)
     extensions: dict[str, Any] = field(default_factory=dict)  # 插件开放配置
 
 
@@ -198,6 +212,7 @@ def _apply_dict(config: AppConfig, raw: dict[str, Any]) -> AppConfig:
         "plugin_breaker": config.plugin_breaker,
         "file_lock": config.file_lock,
         "daemon": config.daemon,
+        "ipc": config.ipc,
     }
     # 开放式 extensions 透传（不做字段校验）
     if "extensions" in raw:

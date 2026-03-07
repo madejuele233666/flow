@@ -1,0 +1,15 @@
+click>=8.1
+toml>=0.10
+gitpython>=3.1
+httpx>=0.27
+
+[ai]
+openai>=1.0
+
+[dev]
+pytest>=8.0
+pytest-cov>=4.0
+ruff>=0.3
+
+[tui]
+textual>=0.50

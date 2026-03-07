@@ -168,12 +168,25 @@ class PluginRegistry:
             logger.info("auto-discovered %d plugins: %s", len(discovered), discovered)
         return discovered
 
-    def setup_all(self, ctx: PluginContext) -> None:
-        """对所有已注册的插件调用 setup(ctx)."""
+    def setup_all(
+        self,
+        ctx: PluginContext,
+        admin_ctx: PluginContext | None = None,
+        admin_names: list[str] | None = None,
+    ) -> None:
+        """对所有已注册的插件调用 setup(ctx).
+
+        Args:
+            ctx: 标准沙盒上下文（受限 API）。
+            admin_ctx: 高权限沙盒上下文（可选）。
+            admin_names: 允许获得 admin_ctx 的插件名白名单。
+        """
+        _admin_set = set(admin_names or [])
         for name, plugin in self._plugins.items():
             try:
-                plugin.setup(ctx)
-                logger.info("plugin %s setup complete", name)
+                target_ctx = admin_ctx if (admin_ctx and name in _admin_set) else ctx
+                plugin.setup(target_ctx)
+                logger.info("plugin %s setup complete (admin=%s)", name, name in _admin_set)
             except Exception:
                 logger.exception("plugin %s setup failed", name)
 

@@ -30,7 +30,7 @@ from flow_engine.events import BackgroundEventWorker, EventBus, EventType
 from flow_engine.hooks import HookManager
 from flow_engine.notifications.base import NotificationService, NotifyLevel
 from flow_engine.notifications.terminal import TerminalNotifier
-from flow_engine.plugins.context import PluginContext
+from flow_engine.plugins.context import AdminContext, PluginContext
 from flow_engine.plugins.registry import PluginRegistry
 from flow_engine.scheduler.factors import CompositeRanker, build_default_factors
 from flow_engine.scheduler.gravity import StubAdvisor, StubBreaker
@@ -124,6 +124,7 @@ class FlowApp:
             failure_threshold=breaker_cfg.failure_threshold,
             recovery_timeout=breaker_cfg.recovery_timeout_seconds,
             safe_mode=breaker_cfg.safe_mode,
+            dev_mode=breaker_cfg.dev_mode,
         )
 
         # ── 存储层（工厂模式 + 文件锁） ──
@@ -171,7 +172,7 @@ class FlowApp:
         self.templates.register_builtins()
         self.templates.load_user_templates(self.config.paths.templates_path)
 
-        # ── 构建 PluginContext（安全沙盒） ──
+        # ── 构建 PluginContext（标准沙盒） ──
         self.plugin_context = PluginContext(
             config=self.config,
             hooks=self.hooks,
@@ -181,11 +182,27 @@ class FlowApp:
             templates=self.templates,
         )
 
-        # ── 插件自动发现（最后执行，通过安全的 PluginContext 初始化） ──
+        # ── 构建 AdminContext（高权限沙盒，受信任插件专用） ──
+        self.admin_context = AdminContext(
+            config=self.config,
+            hooks=self.hooks,
+            notifications=self.notifications,
+            exporters=self.exporters,
+            ranker=self.ranker,
+            templates=self.templates,
+            engine=self.engine,
+            event_bus=self.bus,
+        )
+
+        # ── 插件自动发现（最后执行，通过双轨上下文分发） ──
         self.plugins = PluginRegistry()
         if not breaker_cfg.safe_mode:
             self.plugins.discover()
-            self.plugins.setup_all(self.plugin_context)
+            self.plugins.setup_all(
+                ctx=self.plugin_context,
+                admin_ctx=self.admin_context,
+                admin_names=breaker_cfg.admin_plugins,
+            )
 
         # ── 事件连线 ──
         self._wire_events()
@@ -207,19 +224,17 @@ class FlowApp:
         tasks = await self.repo.load_all()
         await self.repo.save_all(tasks)
         if self.config.git.auto_commit:
-            task_id = event.data.get("task_id", "?")
-            new_state = event.data.get("new_state", "?")
-            state_val = new_state.value if hasattr(new_state, "value") else str(new_state)
-            await asyncio.to_thread(self.vcs.commit, f"{self.config.git.commit_prefix} task #{task_id} → {state_val}")
+            p = event.payload
+            state_val = p.new_state.value if hasattr(p.new_state, "value") else str(p.new_state)
+            await asyncio.to_thread(self.vcs.commit, f"{self.config.git.commit_prefix} task #{p.task_id} → {state_val}")
 
     def _on_notify_bg(self, event) -> None:
         """状态变更自动通知 — 同步回调，由后台 Worker 驱动."""
-        task_id = event.data.get("task_id", "?")
-        new_state = event.data.get("new_state", "?")
-        state_val = new_state.value if hasattr(new_state, "value") else str(new_state)
+        p = event.payload
+        state_val = p.new_state.value if hasattr(p.new_state, "value") else str(p.new_state)
         self.notifications.notify(
             title="状态变更",
-            body=f"任务 #{task_id} → {state_val}",
+            body=f"任务 #{p.task_id} → {state_val}",
             level=NotifyLevel.INFO,
         )
 
@@ -234,7 +249,7 @@ class FlowApp:
         这是一个同步回调，但实际的 async capture 由
         BackgroundEventWorker 在其消费循环中异步执行。
         """
-        task_id = event.data.get("task_id")
+        task_id = event.payload.task_id if event.payload else None
         if task_id is not None:
             # 利用 ensure_future 启动异步捕获，不阻塞当前事件回调
             asyncio.ensure_future(self.context.capture_async(task_id))

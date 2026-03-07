@@ -64,11 +64,15 @@ class EventType(str, Enum):
 
 @dataclass(frozen=True)
 class Event:
-    """不可变的事件载荷."""
+    """不可变的事件容器.
+
+    payload 为强类型载荷（如 TaskStateChangedPayload），
+    替代旧版的 data: dict[str, Any] 弱类型传参。
+    """
 
     type: EventType
     timestamp: datetime = field(default_factory=datetime.now)
-    data: dict[str, Any] = field(default_factory=dict)
+    payload: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -227,12 +231,12 @@ class EventBus:
         if handler in handlers:
             handlers.remove(handler)
 
-    async def emit(self, event_type: EventType, data: dict[str, Any] | None = None) -> None:
+    async def emit(self, event_type: EventType, payload: Any = None) -> None:
         """发布前台事件 — 等待全部处理器完成后返回.
 
         适用于业务关键路径（如状态变更广播），调用方需要保证一致性。
         """
-        event = Event(type=event_type, data=data or {})
+        event = Event(type=event_type, payload=payload)
         handlers = self._subscribers.get(event_type, [])
         logger.debug("emit %s → %d handlers", event_type.value, len(handlers))
 
@@ -250,13 +254,13 @@ class EventBus:
 
         await asyncio.gather(*[_run_handler(h) for h in handlers])
 
-    def emit_background(self, event_type: EventType, data: dict[str, Any] | None = None) -> None:
+    def emit_background(self, event_type: EventType, payload: Any = None) -> None:
         """发布后台事件 — 投入队列后立即返回，绝不阻塞调用方.
 
         适用于非关键路径（截屏保存、Webhook 通知、统计打点等）。
         若无 BackgroundEventWorker 注入，则静默降级为日志警告。
         """
-        event = Event(type=event_type, data=data or {})
+        event = Event(type=event_type, payload=payload)
         handlers = self._subscribers.get(event_type, [])
 
         if not handlers:

@@ -114,39 +114,45 @@ class TransitionEngine:
         """状态转移的核心逻辑（不含锁，由调用方负责并发控制）.
 
         执行流程：
-        1. on_before_transition 钩子（waterfall，可拦截/修改目标状态）
-        2. 合法性校验
-        3. 状态变更
-        4. 事件广播
-        5. on_after_transition 钩子
+        1. before_task_transition 拦截钩子（bail_veto，可一票否决）
+        2. on_before_transition 中间件（waterfall，可修改目标状态）
+        3. 合法性校验
+        4. 状态变更
+        5. 事件广播（强类型载荷）
+        6. on_after_transition 通知
         """
+        from flow_engine.events_payload import TaskStateChangedPayload
+        from flow_engine.hooks_payload import (
+            AfterTransitionPayload,
+            BeforeTransitionPayload,
+            TransitionErrorPayload,
+            VetoCheckPayload,
+        )
+
         # ── 0. before_task_transition 拦截钩子 (bail_veto: 插件可一票否决) ──
         if self._hooks:
-            approved = await self._hooks.call(
-                "before_task_transition",
+            veto_payload = VetoCheckPayload(
                 task=task, old_state=task.state, target_state=target,
             )
+            approved = await self._hooks.call("before_task_transition", veto_payload)
             if approved is False:
                 raise TransitionVetoedError(task.id, task.state, target)
 
-        # ── 1. on_before_transition 钩子 (waterfall: 可修改 target) ──
+        # ── 1. on_before_transition 钩子 (waterfall: 插件可原地修改 target_state) ──
         if self._hooks:
-            hook_result = await self._hooks.call(
-                "on_before_transition",
-                task=task, target_state=target,
-            )
-            # waterfall 返回完整 kwargs 字典，从中取出可能被插件修改的 target_state
-            if isinstance(hook_result, dict):
-                target = hook_result.get("target_state", target)
+            wf_payload = BeforeTransitionPayload(task=task, target_state=target)
+            await self._hooks.call("on_before_transition", wf_payload)
+            # 插件可能已原地修改 wf_payload.target_state
+            target = wf_payload.target_state
 
         # ── 2. 合法性校验 ──
         if not can_transition(task.state, target):
             error = IllegalTransitionError(task.state, target)
             if self._hooks:
-                await self._hooks.call(
-                    "on_transition_error",
+                err_payload = TransitionErrorPayload(
                     task=task, target_state=target, error=error,
                 )
+                await self._hooks.call("on_transition_error", err_payload)
             raise error
 
         # ── 3. 状态变更 ──
@@ -156,19 +162,20 @@ class TransitionEngine:
 
         logger.info("Task #%s: %s → %s", task.id, old_state.value, target.value)
 
-        # ── 4. 事件广播 ──
-        await self._bus.emit(EventType.TASK_STATE_CHANGED, {
-            "task_id": task.id,
-            "old_state": old_state,
-            "new_state": target,
-        })
+        # ── 4. 事件广播（强类型载荷） ──
+        await self._bus.emit(
+            EventType.TASK_STATE_CHANGED,
+            TaskStateChangedPayload(
+                task_id=task.id, old_state=old_state, new_state=target,
+            ),
+        )
 
         # ── 5. after 钩子 (parallel: 全部通知) ──
         if self._hooks:
-            await self._hooks.call(
-                "on_after_transition",
+            after_payload = AfterTransitionPayload(
                 task=task, old_state=old_state, new_state=target,
             )
+            await self._hooks.call("on_after_transition", after_payload)
 
         return task
 

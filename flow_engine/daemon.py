@@ -53,7 +53,10 @@ class FlowDaemon:
 
     def __init__(self, app: FlowApp | None = None) -> None:
         self._app = app or FlowApp()
-        self._ipc = IPCServer()
+        self._ipc = IPCServer(
+            tcp_host=self._app.config.ipc.tcp_host,
+            tcp_port=self._app.config.ipc.tcp_port,
+        )
         self._pid_path = DEFAULT_PID_PATH
         self._running = False
 
@@ -267,7 +270,9 @@ class FlowDaemon:
         )
         tasks.append(task)
         await self._app.repo.save_all(tasks)
-        await self._app.bus.emit(EventType.TASK_CREATED, {"task_id": task.id})
+
+        from flow_engine.events_payload import TaskCreatedPayload
+        await self._app.bus.emit(EventType.TASK_CREATED, TaskCreatedPayload(task_id=task.id))
         return {"id": task.id, "title": task.title, "priority": task.priority}
 
     async def _handle_task_start(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -388,9 +393,11 @@ class FlowDaemon:
     def _wire_broadcasts(self) -> None:
         """将关键事件总线事件桥接到 IPC 广播."""
         async def _on_state_changed(event: Any) -> None:
+            from dataclasses import asdict
+            payload_data = asdict(event.payload) if event.payload else {}
             await self._ipc.broadcast(Push(
                 event="task.state_changed",
-                data=event.data if hasattr(event, "data") else {},
+                data=payload_data,
             ))
 
         self._app.bus.subscribe(EventType.TASK_STATE_CHANGED, _on_state_changed)

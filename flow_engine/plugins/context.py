@@ -134,3 +134,59 @@ class PluginContext:
     def register_template(self, template: Any) -> None:
         """注册任务模板."""
         self._templates.register(template)
+
+
+# ---------------------------------------------------------------------------
+# AdminContext — 受信任插件的高权限沙盒
+# ---------------------------------------------------------------------------
+
+class AdminContext(PluginContext):
+    """高权限沙盒 — PluginContext 的超集.
+
+    仅面向「官方插件」或用户在 config.toml 中显式授权的第三方插件。
+    在 PluginContext 全部安全 API 的基础上，额外开放底层控制流接口。
+
+    设计要点：
+    - 纯子类，只做加法，完全兼容 PluginContext 类型注解。
+    - 依赖通过 TYPE_CHECKING 延迟导入，零运行时耦合。
+    - 使用只读 @property 暴露，防止属性被插件覆写。
+
+    用法（受信任插件侧）：
+        class CoreAutoScheduler(FlowPlugin):
+            def setup(self, ctx: AdminContext) -> None:
+                # 高级 API: 直接访问 TransitionEngine
+                self._engine = ctx.engine
+                ctx.register_hook(self)
+    """
+
+    def __init__(
+        self,
+        config: AppConfig,
+        hooks: HookRegistrar,
+        notifications: NotifierRegistrar,
+        exporters: ExporterRegistrar,
+        ranker: FactorRegistrar,
+        templates: TemplateRegistrar,
+        *,
+        engine: Any = None,
+        event_bus: Any = None,
+    ) -> None:
+        super().__init__(config, hooks, notifications, exporters, ranker, templates)
+        self._engine = engine
+        self._event_bus = event_bus
+
+    @property
+    def engine(self) -> Any:
+        """状态转移引擎（只读）.
+
+        类型实际为 TransitionEngine，使用 Any 避免强运行时依赖。
+        """
+        return self._engine
+
+    @property
+    def event_bus(self) -> Any:
+        """事件总线（只读）.
+
+        类型实际为 EventBus，使用 Any 避免强运行时依赖。
+        """
+        return self._event_bus

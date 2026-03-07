@@ -224,6 +224,7 @@ class HookManager:
         failure_threshold: int = 5,
         recovery_timeout: float = 60.0,
         safe_mode: bool = False,
+        dev_mode: bool = False,
     ) -> None:
         self._handlers: dict[str, list[Callable[..., Any]]] = {
             name: [] for name in HOOK_SPECS
@@ -236,6 +237,7 @@ class HookManager:
         self._failure_threshold = failure_threshold
         self._recovery_timeout = recovery_timeout
         self._safe_mode = safe_mode
+        self._dev_mode = dev_mode
 
     def register(self, implementor: object) -> list[str]:
         """扫描 implementor 上与 HOOK_SPECS 同名的方法并注册.
@@ -267,18 +269,21 @@ class HookManager:
                 self._handlers[hook_name].remove(method)
                 self._breakers.pop(id(method), None)
 
-    async def call(self, hook_name: str, **kwargs: Any) -> Any:
+    async def call(self, hook_name: str, payload: Any = None) -> Any:
         """按策略执行钩子（带熔断保护，全异步并发）.
 
         Args:
             hook_name: 钩子名称（必须在 HOOK_SPECS 中声明）。
-            **kwargs: 传给钩子方法的参数。
+            payload: 强类型载荷对象（dataclass 实例）。
+                - Waterfall: 可变 dataclass，插件原地修改属性。
+                - Parallel/Bail/Collect: frozen dataclass，只读。
 
         Returns:
             根据策略不同：
             - PARALLEL: None
-            - WATERFALL: 最终链式结果
+            - WATERFALL: 原样返回 payload（已被插件原地修改）
             - BAIL: 第一个非 None 结果
+            - BAIL_VETO: True/False
             - COLLECT: 所有返回值的列表
         """
         if self._safe_mode:
@@ -296,19 +301,23 @@ class HookManager:
         strategy = spec.strategy
 
         if strategy == HookStrategy.PARALLEL:
-            return await self._call_parallel(hook_name, handlers, kwargs)
+            return await self._call_parallel(hook_name, handlers, payload)
         elif strategy == HookStrategy.WATERFALL:
-            return await self._call_waterfall(hook_name, handlers, kwargs)
+            return await self._call_waterfall(hook_name, handlers, payload)
         elif strategy == HookStrategy.BAIL:
-            return await self._call_bail(hook_name, handlers, kwargs)
+            return await self._call_bail(hook_name, handlers, payload)
         elif strategy == HookStrategy.BAIL_VETO:
-            return await self._call_bail_veto(hook_name, handlers, kwargs)
+            return await self._call_bail_veto(hook_name, handlers, payload)
         elif strategy == HookStrategy.COLLECT:
-            return await self._call_collect(hook_name, handlers, kwargs)
+            return await self._call_collect(hook_name, handlers, payload)
         return None
 
-    async def _safe_call(self, handler: Callable, kwargs: dict) -> Any:
-        """带熔断 + 超时保护的安全调用. 支持 sync/async handler。"""
+    async def _safe_call(self, handler: Callable, payload: Any) -> Any:
+        """带熔断 + 超时保护的安全调用.
+
+        支持 sync/async handler。
+        dev_mode=True 时异常直接上抛，不静默、不熔断。
+        """
         breaker = self._breakers.get(id(handler))
         if breaker and breaker.is_open:
             logger.debug("breaker OPEN for %s, skipping", handler)
@@ -316,69 +325,70 @@ class HookManager:
 
         try:
             if inspect.iscoroutinefunction(handler):
-                result = await asyncio.wait_for(handler(**kwargs), timeout=self._hook_timeout)
+                result = await asyncio.wait_for(handler(payload), timeout=self._hook_timeout)
             else:
-                result = await asyncio.wait_for(asyncio.to_thread(handler, **kwargs), timeout=self._hook_timeout)
-                
+                result = await asyncio.wait_for(asyncio.to_thread(handler, payload), timeout=self._hook_timeout)
+
             if breaker:
                 breaker.record_success()
             return result
         except TimeoutError:
+            if self._dev_mode:
+                raise
             logger.warning("hook handler %s timed out (limit=%.2fs)", handler, self._hook_timeout)
             if breaker:
                 breaker.record_failure()
             return None
         except Exception:
+            if self._dev_mode:
+                raise
             logger.exception("hook handler %s failed", handler)
             if breaker:
                 breaker.record_failure()
             return None
 
     async def _call_parallel(
-        self, name: str, handlers: list[Callable], kwargs: dict,
+        self, name: str, handlers: list[Callable], payload: Any,
     ) -> None:
-        tasks = [self._safe_call(handler, kwargs) for handler in handlers]
+        tasks = [self._safe_call(handler, payload) for handler in handlers]
         await asyncio.gather(*tasks)
 
     async def _call_waterfall(
-        self, name: str, handlers: list[Callable], kwargs: dict,
-    ) -> dict[str, Any]:
-        """瀑布流执行 — 纯函数式 kwargs 更新.
+        self, name: str, handlers: list[Callable], payload: Any,
+    ) -> Any:
+        """瀑布流执行 — 原地修改模式.
 
         约定：
-        - handler 始终接收完整的 **current_kwargs。
-        - handler 返回 None → 不修改任何参数。
-        - handler 返回 dict → 合并到 current_kwargs（覆盖同名键）。
-        - 最终返回累积更新后的完整 kwargs 字典。
+        - handler 接收一个可变 dataclass 载荷对象。
+        - handler 通过原地修改 payload 属性来变更数据
+          （如 payload.target_state = TaskState.DONE）。
+        - handler 的返回值被忽略 — 所有修改都发生在 payload 本体上。
+        - 最终返回被全部 handler 修改过的同一个 payload 对象。
 
-        调用方按需从返回的字典中取出被修改的值。
-        HookManager 本身不关心具体键名，实现彻底解耦。
+        HookManager 本身不关心 payload 的具体类型，实现彻底解耦。
         """
-        current_kwargs = dict(kwargs)  # 浅拷贝，避免污染原始参数
         for handler in handlers:
-            ret = await self._safe_call(handler, current_kwargs)
-            if isinstance(ret, dict):
-                current_kwargs.update(ret)
-        return current_kwargs
+            await self._safe_call(handler, payload)
+        return payload
 
     async def _call_bail(
-        self, name: str, handlers: list[Callable], kwargs: dict,
+        self, name: str, handlers: list[Callable], payload: Any,
     ) -> Any:
         for handler in handlers:
-            ret = await self._safe_call(handler, kwargs)
+            ret = await self._safe_call(handler, payload)
             if ret is not None:
                 return ret  # 第一个非 None 胜出
         return None
 
     async def _call_collect(
-        self, name: str, handlers: list[Callable], kwargs: dict,
+        self, name: str, handlers: list[Callable], payload: Any,
     ) -> list[Any]:
-        tasks = [self._safe_call(handler, kwargs) for handler in handlers]
+        tasks = [self._safe_call(handler, payload) for handler in handlers]
         results = await asyncio.gather(*tasks)
         return [r for r in results if r is not None]
 
     async def _call_bail_veto(
-        self, name: str, handlers: list[Callable], kwargs: dict,
+        self, name: str, handlers: list[Callable], payload: Any,
     ) -> bool:
         """一票否决执行 — 全部 handler 并发执行，任一返回 False 即否决.
 
@@ -387,7 +397,7 @@ class HookManager:
         - handler 返回 None 或 True 视为同意；仅返回 False 视为否决。
         - 返回 True 表示全部通过，False 表示被否决。
         """
-        tasks = [self._safe_call(handler, kwargs) for handler in handlers]
+        tasks = [self._safe_call(handler, payload) for handler in handlers]
         results = await asyncio.gather(*tasks)
         # 任一 handler 显式返回 False → 否决
         for result in results:
