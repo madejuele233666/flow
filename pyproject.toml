@@ -30,7 +30,7 @@ dev = [
 flow = "flow_engine.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["flow_engine*"]
+include = ["flow_engine*", "flow_hud*"]
 
 [tool.ruff]
 line-length = 100
