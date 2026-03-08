@@ -11,6 +11,10 @@
 *   提炼一份 **可逐项打勾的架构审计检查清单 (Architecture Audit Checklist)**，嵌入未来的 AI 架构协作流程。
 *   固化 **"对标法 (Alignment Protocol)"标准操作流程**：当 AI 需要参照已有系统设计新模块时，如何确保精度不衰减。
 *   同时沉淀 **正面经验**：明确哪些做法是正确的、应被保留的。
+*   建立 **三层防御架构 (Three-Tier Enforcement)**：
+    *   第一层: `openspec/project.md` — 项目级全局准则，所有变更自动继承
+    *   第二层: `openspec/schemas/` — 工作流级强制自检，嵌入 artifact 生成指令
+    *   第三层: `docs/ai_architecture_guidelines.md` — 详细参考文档，按需查阅
 
 **Non-Goals:**
 *   不涉及 HUD 业务特性的二次设计。此文档专供"如何让 AI 产出工程级架构契约"。
@@ -153,6 +157,80 @@ AI 收到的参照是概念性描述 (`architecture.md`)，而非主引擎的具
 | **检查点阻断 (Checkpoint Block)** | 原版 `tasks.md` | AI 主动在高危步骤前设置用户确认关卡，有效防止 AI 一路冲撞 |
 | **防腐规定 (Anti-Corruption Rule)** | 原版 `tasks.md` | 在自然语言中直接写出代码底线（如"严禁 import PySide6"），给 AI 加思想钢印 |
 | **两步走战略 (Step A/B)** | 原版 `proposal.md` | 先骨架后填充，防止 AI 跳过接口设计直接编写业务代码 |
+
+### Decision 7: 建立项目级全局准则 — `openspec/project.md`
+
+`project.md` 是 OpenSpec 的全局上下文文件，内容会被 AI 在创建任何 artifact 时自动读取。此处应写入**高层方向性准则（英文）**，而非详细的检查清单。
+
+应包含的准则类别：
+
+1. **Architecture-First Principle**: 架构设计必须产出工程级契约（接口定义、强类型载荷、边界约束），而非概念抽象。
+2. **Port Contract Anti-Leakage**: 所有模块边界必须定义 Protocol 类，入参/返回值只允许基础类型。
+3. **Tiered Plugin Sandboxing**: 插件架构必须实现至少两层权限沙箱。
+4. **Typed Payloads Mandatory**: 事件和钩子必须使用 `@dataclass(frozen=True)` 载荷。
+5. **Defense Mechanisms**: EventBus 双路径、多策略钩子、熔断器保护。
+6. **Alignment Protocol**: 参照现有系统设计时的 5 步 SOP。
+7. **AI Self-Verification**: AI 产出 design.md/tasks.md 后必须执行自检。
+
+**设计要点**：
+- `project.md` 应当简洁（控制在 1 页以内），只包含方向性原则，不包含具体的检查清单或 Before/After 案例（这些放在 `docs/ai_architecture_guidelines.md` 中）。
+- 使用英文书写，因为它是 AI 工具链的全局配置而非面向人类的可读文档。
+
+### Decision 8: 在 Schema 工作流中注入 AI 自检环节 — `openspec/schemas/`
+
+OpenSpec 的 schema 文件（`schema.yaml`）中每个 artifact 的 `instruction` 字段是 AI 生成该 artifact 时的直接指令。这是注入自检规则的**最低层、最硬性的入口**——不依赖 skill 记忆、不依赖人工提醒，AI 在生成 artifact 时必然会读取并执行这些指令。
+
+具体的注入策略：
+
+**对 `design` artifact 的 instruction 追加（保留原有内容不变）：**
+
+```
+AI Self-Verification (MANDATORY after completing design.md):
+
+1. If the design references or aligns with an existing system, execute the
+   Alignment Protocol:
+   a. List every source file being referenced
+   b. Extract core classes, method signatures, data structures from each
+   c. Build a mapping table (reference module → new module)
+   d. Verify each contract is covered (✅/❌/⚠️) and append the coverage
+      report at the end of design.md
+
+2. Run the Architecture Audit Checklist against the design:
+   - Data Contract Checks: Are typed payloads defined for all events/hooks?
+   - Boundary Isolation: Is there a Protocol class for port contracts?
+     Are plugin contexts tiered (standard vs admin)?
+   - Defense Mechanisms: Does EventBus have dual paths? Does hook system
+     have multiple strategies and circuit breakers?
+   - Plugin Ecosystem: Are manifests declarative? Is auto-discovery supported?
+
+3. Any uncovered item MUST be addressed before finalizing the artifact.
+```
+
+**对 `tasks` artifact 的 instruction 追加（保留原有内容不变）：**
+
+```
+AI Self-Verification (MANDATORY when generating tasks.md):
+
+1. Checkpoint Blocks: Any task group involving core infrastructure
+   (state machine, event bus, hook system, cross-thread communication)
+   MUST end with a checkpoint task:
+   "- [ ] X.Y 【检查点】 Present test output to user. MUST obtain explicit
+   user confirmation before proceeding to next phase."
+
+2. Anti-Corruption Rules: Any task implementing a pure-logic file
+   (state machine, event payloads, hook payloads) MUST include:
+   "【防腐规定】This file MUST NOT import any UI framework or
+   platform-specific dependencies."
+
+3. Output Anchoring: Tasks MUST be anchored to concrete deliverables
+   (e.g., "Implement MouseMovePayload dataclass") not abstract processes
+   (e.g., "Set up event mechanism").
+```
+
+**设计要点**：
+- 原有的 `spec-driven` schema 内容必须完整保留，自检规则仅作为追加内容加在各 instruction 末尾。
+- schema 文件名可更改为更贴切的名称（如 `spec-driven-with-guardrails`），或者直接覆盖现有的 `ai-postmortem-workflow` schema。
+- 这种注入是 **非侵入式** 的：原有工作流的所有功能和规则不受影响，只是在 AI 的责任边界上多加了一道自检闸门。
 
 ## Risks / Trade-offs
 
