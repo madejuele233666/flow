@@ -25,12 +25,43 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from flow_hud.core.config import HudConfig
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# 协议定义 — 强类型契约
+# ---------------------------------------------------------------------------
+
+@runtime_checkable
+class HudHookRegistrar(Protocol):
+    """HUD 钩子注册协议 (对标 flow_engine.HookRegistrar)."""
+
+    def register(self, implementor: object) -> list[str]: ...
+    def unregister(self, implementor: object) -> None: ...
+
+
+@runtime_checkable
+class HudEventBusRegistrar(Protocol):
+    """HUD 事件总线注册协议 (插件侧沙盒)."""
+
+    def subscribe(self, event_type: Any, handler: Callable) -> None: ...
+    def unsubscribe(self, event_type: Any, handler: Callable) -> None: ...
+    def emit(self, event_type: Any, payload: Any = None) -> None: ...
+
+
+@runtime_checkable
+class HudStateMachineProtocol(Protocol):
+    """HUD 状态机契约 (插件侧沙盒)."""
+
+    @property
+    def current_state(self) -> Any: ...  # 返回 HudState 枚举，但避免显式依赖
+
+    def transition(self, target: Any) -> tuple[Any, Any]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -47,21 +78,26 @@ class HudPluginContext:
     - get_extension_config ← config.extensions.get
     - data_dir / safe_mode ← 只读配置属性
 
-    底层引用（hooks, event_bus）通过 Any 类型注入，
+    底层引用（hooks, event_bus）通过 Protocol 注入，实现防泄漏。
     禁止在此文件中 import 具体类，避免循环依赖。
     """
 
     def __init__(
         self,
         config: HudConfig,
-        hooks: Any,        # HudHookManager（用 Any 避免强运行时依赖）
-        event_bus: Any,    # HudEventBus（用 Any 避免强运行时依赖）
+        hooks: HudHookRegistrar,
+        event_bus: HudEventBusRegistrar,
     ) -> None:
         self._config = config
         self._hooks = hooks
         self._event_bus = event_bus
         # UI 画布注册表：name → widget（Any，避免 PySide6 依赖）
         self._widgets: dict[str, Any] = {}
+
+    @property
+    def event_bus(self) -> HudEventBusRegistrar:
+        """事件总线访问器（受限制的 Protocol）."""
+        return self._event_bus
 
     # ── 注册 API ──
 
@@ -136,43 +172,29 @@ class HudAdminContext(HudPluginContext):
 
     设计要点：
     - 纯子类，只做加法，完全兼容 HudPluginContext 类型注解。
-    - 底层引用一律只读 @property Any，防止属性被插件覆写。
+    - 底层引用一律只读 @property，并使用 Protocol 强化类型安全。
     - TYPE_CHECKING 延迟导入，零运行时耦合（防循环 import）。
     """
 
     def __init__(
         self,
         config: HudConfig,
-        hooks: Any,
-        event_bus: Any,
+        hooks: HudHookRegistrar,
+        event_bus: HudEventBusRegistrar,
         *,
-        state_machine: Any = None,   # HudStateMachine（用 Any 避免强运行时依赖）
-        hook_manager: Any = None,    # HudHookManager（同上）
+        state_machine: HudStateMachineProtocol | None = None,
+        hook_manager: HudHookRegistrar | None = None,
     ) -> None:
         super().__init__(config=config, hooks=hooks, event_bus=event_bus)
         self._state_machine = state_machine
         self._hook_manager = hook_manager
 
     @property
-    def state_machine(self) -> Any:
-        """HUD 状态机（只读）.
-
-        类型实际为 HudStateMachine，使用 Any 避免强运行时依赖。
-        """
+    def state_machine(self) -> HudStateMachineProtocol | None:
+        """HUD 状态机（只读，Protocol 契约）."""
         return self._state_machine
 
     @property
-    def event_bus(self) -> Any:
-        """事件总线（只读）.
-
-        类型实际为 HudEventBus，使用 Any 避免强运行时依赖。
-        """
-        return self._event_bus
-
-    @property
-    def hook_manager(self) -> Any:
-        """钩子管理器（只读）.
-
-        类型实际为 HudHookManager，使用 Any 避免强运行时依赖。
-        """
+    def hook_manager(self) -> HudHookRegistrar | None:
+        """钩子管理器（只读，Protocol 契约）."""
         return self._hook_manager

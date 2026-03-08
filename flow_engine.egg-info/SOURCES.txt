@@ -51,7 +51,10 @@ flow_engine/templates/__init__.py
 flow_engine/templates/base.py
 flow_engine/templates/builtin.py
 flow_hud/__init__.py
+flow_hud/main.py
 flow_hud/adapters/__init__.py
+flow_hud/adapters/debug_text_plugin.py
+flow_hud/adapters/ui_canvas.py
 flow_hud/core/__init__.py
 flow_hud/core/app.py
 flow_hud/core/config.py

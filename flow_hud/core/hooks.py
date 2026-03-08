@@ -24,10 +24,9 @@ HUD 系统钩子:
 
 from __future__ import annotations
 
-import inspect
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass
 from enum import Enum
 from typing import Any, Callable
 
@@ -243,6 +242,19 @@ class HudHookManager:
         if spec is None:
             logger.warning("unknown hook: %s", hook_name)
             return None
+
+        # 对标 payload-integrity.md — 强制实施载荷完整性
+        if payload is not None:
+            if not is_dataclass(payload):
+                raise TypeError(f"Hook {hook_name!r} payload must be a dataclass, got {type(payload)}")
+
+            params = getattr(payload.__class__, "__dataclass_params__")
+            if spec.strategy in (HudHookStrategy.PARALLEL, HudHookStrategy.BAIL, HudHookStrategy.BAIL_VETO):
+                if not params.frozen:
+                    raise TypeError(f"Hook {hook_name!r} (strategy={spec.strategy.value}) requires a frozen payload")
+            elif spec.strategy == HudHookStrategy.WATERFALL:
+                if params.frozen:
+                    raise TypeError(f"Hook {hook_name!r} (strategy={spec.strategy.value}) requires a mutable payload")
 
         handlers = self._handlers.get(hook_name, [])
         if not handlers:

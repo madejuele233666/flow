@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, is_dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any, Callable
@@ -237,12 +237,16 @@ class HudEventBus(QObject):
     def emit(self, event_type: HudEventType, payload: Any = None) -> None:
         """发布前台事件 — Qt Signal 确保跨线程安全.
 
-        通过 _signal.emit() 触发 Qt 事件系统。若调用方在 Qt 主线程，
-        handler 在此 emit 调用中同步执行；若在子线程，通过 QueuedConnection
-        压入主线程 event loop 异步执行。
-
-        适用于业务关键路径（如状态变更广播），需要保证投递可靠性。
+        对标 payload-integrity.md — 强制实施载荷完整性：
+        - 必须是 dataclass
+        - 必须是 frozen=True（事件为只读通知）
         """
+        if payload is not None:
+            if not is_dataclass(payload):
+                raise TypeError(f"Event payload must be a dataclass, got {type(payload)}")
+            if not getattr(payload.__class__, "__dataclass_params__").frozen:
+                raise TypeError(f"Event payload must be frozen (frozen=True), got {type(payload)}")
+
         logger.debug("emit %s", event_type.value)
         self._signal.emit(event_type.value, payload)
 

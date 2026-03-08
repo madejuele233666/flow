@@ -56,30 +56,37 @@ class TestHudServiceProtocol:
 
     def test_protocol_has_required_methods(self):
         """HudServiceProtocol 必须声明全部 4 个契约方法。"""
-        for method_name in ["get_hud_state", "transition_to", "register_widget", "list_plugins"]:
+        for method_name in ["get_status", "transition_to", "register_widget", "list_plugins"]:
             assert hasattr(HudServiceProtocol, method_name), f"Missing method: {method_name}"
 
 
 # ---------------------------------------------------------------------------
-# get_hud_state — 纯 dict 返回测试
+# get_status — 纯 dict 返回测试
 # ---------------------------------------------------------------------------
 
-class TestGetHudState:
+class TestGetStatus:
     def test_returns_dict(self, service):
-        result = service.get_hud_state()
+        result = service.get_status()
         assert isinstance(result, dict)
 
     def test_state_is_string(self, service):
-        result = service.get_hud_state()
+        result = service.get_status()
         assert "state" in result
         assert isinstance(result["state"], str), "state must be a plain str, not HudState enum"
 
     def test_initial_state_is_ghost(self, service):
-        result = service.get_hud_state()
+        result = service.get_status()
         assert result["state"] == "ghost"
 
+    def test_contains_extra_fields(self, service):
+        result = service.get_status()
+        assert "safe_mode" in result
+        assert "data_dir" in result
+        assert isinstance(result["safe_mode"], bool)
+        assert isinstance(result["data_dir"], str)
+
     def test_active_plugins_is_list_of_strings(self, service):
-        result = service.get_hud_state()
+        result = service.get_status()
         assert "active_plugins" in result
         assert isinstance(result["active_plugins"], list)
         for item in result["active_plugins"]:
@@ -88,7 +95,7 @@ class TestGetHudState:
     def test_no_domain_objects_in_return(self, service):
         """返回值中不得包含 HudState 枚举或任何域对象。"""
         from flow_hud.core.state_machine import HudState
-        result = service.get_hud_state()
+        result = service.get_status()
 
         # 递归检查：没有任何值是 HudState 实例
         def has_domain_obj(val):
@@ -100,7 +107,7 @@ class TestGetHudState:
                 return any(has_domain_obj(v) for v in val)
             return False
 
-        assert not has_domain_obj(result), "get_hud_state() returned an internal domain object!"
+        assert not has_domain_obj(result), "get_status() returned an internal domain object!"
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +144,7 @@ class TestTransitionTo:
 
     def test_transition_updates_state(self, service):
         service.transition_to("pulse")
-        state_after = service.get_hud_state()
+        state_after = service.get_status()
         assert state_after["state"] == "pulse"
 
 

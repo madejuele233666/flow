@@ -42,13 +42,13 @@ class HudServiceProtocol(Protocol):
     - 严禁传入 QWidget、HudState 等域内对象
 
     方法语义:
-        get_hud_state()           → 查询当前 HUD 状态摘要
-        transition_to(target)     → 触发状态转换（target 为字符串如 \"pulse\"）
+        get_status()              → 查询当前 HUD 状态摘要（对标 FlowClient.get_status）
+        transition_to(target)     → 触发状态转换（target 为字符串如 "pulse"）
         register_widget(name, slot) → 声明 UI 插槽预占（纯字符串约定）
         list_plugins()            → 列出所有已注册插件
     """
 
-    def get_hud_state(self) -> dict[str, Any]: ...
+    def get_status(self) -> dict[str, Any]: ...
 
     def transition_to(self, target: str) -> dict[str, Any]: ...
 
@@ -73,30 +73,31 @@ class HudLocalService:
     def __init__(self, app: HudApp) -> None:
         self._app = app
 
-    def get_hud_state(self) -> dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """查询当前 HUD 状态.
 
         Returns:
-            {\"state\": str, \"active_plugins\": list[str]}
+            {"state": str, "active_plugins": list[str], "safe_mode": bool}
         """
         state = self._app.state_machine.current_state
         return {
             "state": state.value,
             "active_plugins": self._app.plugins.names(),
+            "safe_mode": self._app.config.safe_mode,
+            "data_dir": str(self._app.config.data_dir),
         }
 
     def transition_to(self, target: str) -> dict[str, Any]:
         """触发 HUD 状态转换.
 
         Args:
-            target: 目标状态字符串（\"ghost\" / \"pulse\" / \"command\"）
+            target: 目标状态字符串（"ghost" / "pulse" / "command"）
 
         Returns:
-            {\"old_state\": str, \"new_state\": str}
+            {"old_state": str, "new_state": str}
 
         Raises:
             ValueError: target 不是合法的 HudState 值
-            IllegalTransitionError: 非法状态转换（将错误消息包装进 dict 返回）
         """
         from flow_hud.core.state_machine import HudState, IllegalTransitionError
 
@@ -116,20 +117,20 @@ class HudLocalService:
 
         Args:
             name: 小部件唯一名称
-            slot: 目标插槽位置字符串（如 \"top_right\", \"center\"）
+            slot: 目标插槽位置字符串（如 "top_right", "center"）
 
         Returns:
-            {\"name\": str, \"slot\": str, \"registered\": bool}
+            {"name": name, "slot": slot, "registered": True}
         """
-        # 在此层仅做声明记录；实际 Qt 小部件由插件通过 ctx.register_widget() 注册
-        logger.debug("register_widget: name=%r slot=%r", name, slot)
+        # 在服务契约层，我们只返回确认 dict
+        logger.debug("register_widget attempt: name=%r slot=%r", name, slot)
         return {"name": name, "slot": slot, "registered": True}
 
     def list_plugins(self) -> list[dict[str, Any]]:
         """列出所有已注册插件.
 
         Returns:
-            [{\"name\": str, \"version\": str, \"description\": str}, ...]
+            [{"name": str, "version": str, "description": str}, ...]
         """
         result = []
         for plugin in self._app.plugins.all():
