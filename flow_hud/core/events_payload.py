@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 # ---------------------------------------------------------------------------
@@ -57,7 +58,7 @@ class IpcMessageReceivedPayload:
     """从 Flow Engine 后端接收到的 IPC 消息 — IPC_MESSAGE_RECEIVED 事件载荷."""
 
     method: str
-    data: dict
+    data: dict[str, Any]
 
 
 # ---------------------------------------------------------------------------

@@ -36,8 +36,8 @@ class HudConfig:
         data_dir = \"~/.flow_hud\"
 
         [plugins]
-        plugins = [\"ipc-bridge\", \"mouse-radar\"]
-        admin_plugins = [\"ipc-bridge\"]
+        plugins = ["ipc-client", "mouse-radar"]
+        admin_plugins = ["ipc-client"]
         safe_mode = false
 
         [hook_breaker]

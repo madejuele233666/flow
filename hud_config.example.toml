@@ -1,0 +1,23 @@
+[hud]
+data_dir = "~/.flow_hud"
+
+[plugins]
+# 普通插件列表
+plugins = ["mouse-radar"]
+# 高权限插件列表（IPC 插件必须在此列表中，因为它需要 HudAdminContext）
+admin_plugins = ["ipc-client"]
+safe_mode = false
+
+[extensions]
+# 插件专属配置
+[extensions.ipc-client]
+socket_path = "~/.flow_engine/daemon.sock"
+
+[worker]
+max_retries = 2
+
+[hook_breaker]
+hook_timeout = 0.5
+failure_threshold = 5
+recovery_timeout = 60.0
+dev_mode = false
