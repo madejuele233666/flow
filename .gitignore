@@ -1,8 +1,15 @@
 .venv/
 __pycache__/
 *.pyc
+*.pyo
 .pytest_cache/
 .ruff_cache/
 build/
 dist/
 *.egg-info/
+.vscode/
+.codex/
+.cache_instructions.json
+verification_report.json
+verification_report.md
+sourcecode.zip
