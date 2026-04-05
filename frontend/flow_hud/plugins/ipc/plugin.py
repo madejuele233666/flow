@@ -5,7 +5,6 @@ import logging
 import os
 import random
 import threading
-import time
 import uuid
 from typing import Any
 
@@ -15,33 +14,44 @@ from flow_hud.plugins.base import HudPlugin
 from flow_hud.plugins.context import HudAdminContext
 from flow_hud.plugins.ipc import codec
 from flow_hud.plugins.ipc.protocol import (
+    EVENT_SESSION_KEEPALIVE,
+    ERR_CONFIG_INVALID,
     ERR_DAEMON_OFFLINE,
     ERR_INTERNAL,
     ERR_IPC_PROTOCOL_MISMATCH,
+    HelloLimits,
     IpcClientProtocol,
     IpcWirePush,
     IpcWireRequest,
     IpcWireResponse,
+    ROLE_PUSH,
+    ROLE_RPC,
+    TRANSPORT_TCP,
+    TRANSPORT_UNIX,
 )
+from flow_hud.plugins.ipc.session import IpcProtocolError, negotiate_hello
+from flow_hud.plugins.ipc.transport import IpcEndpoint, SocketTransportAdapter
 from flow_hud.plugins.manifest import HudPluginManifest
 
 logger = logging.getLogger(__name__)
 
 _DAEMON_SOCKET_ENV = "FLOW_DAEMON_SOCKET"
+_DAEMON_HOST_ENV = "FLOW_DAEMON_HOST"
+_DAEMON_PORT_ENV = "FLOW_DAEMON_PORT"
+_DAEMON_TRANSPORT_ENV = "FLOW_DAEMON_TRANSPORT"
 
 
 class IpcClientPlugin(HudPlugin, IpcClientProtocol):
-    """IPC 客户端插件.
-    
-    负责与 Flow Engine Daemon 建立长连接，监听推送并转发到 HUD 事件总线。
-    同时提供 request 接口供业务插件调用。
-    """
-
     manifest = HudPluginManifest(
         name="ipc-client",
-        version="0.1.0",
-        description="Zero dependency IPC connection",
-        config_schema={"socket_path": str},
+        version="0.2.0",
+        description="V2 IPC client with transport/session/message boundaries",
+        config_schema={
+            "transport": str,
+            "host": str,
+            "port": int,
+            "socket_path": str,
+        },
     )
 
     def __init__(self) -> None:
@@ -49,157 +59,115 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
         self._stop_event = threading.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
-        self._socket_path = ""
+        self._main_task: asyncio.Task | None = None
+        self._endpoint: IpcEndpoint | None = None
+        self._adapter = SocketTransportAdapter()
+        self._limits: HelloLimits | None = None
+        self._push_capabilities: set[str] = set()
+        self._runtime_endpoint_override: dict[str, Any] = {}
 
     def setup(self, ctx: HudAdminContext) -> None:
-        """插件初始化."""
-        # 安全检查是否具有特权属性
         if not isinstance(ctx, HudAdminContext):
             logger.error("IPC Client Plugin requires HudAdminContext")
             return
-
         self._ctx = ctx
-        
-        # 获取配置（优先显式配置，其次环境变量）
-        cfg = ctx.get_extension_config("ipc-client")
-        socket_path = cfg.get("socket_path") or os.environ.get(_DAEMON_SOCKET_ENV)
-        if not socket_path:
-            logger.error(
-                "IPC socket path is not configured. Set extensions.ipc-client.socket_path "
-                "or env %s.",
-                _DAEMON_SOCKET_ENV,
-            )
+        self._endpoint = self._resolve_endpoint(ctx)
+        if self._endpoint is None:
             return
-        self._socket_path = os.path.expanduser(socket_path)
 
-        # 启动后台线程
-        self._thread = threading.Thread(
-            target=self._thread_entry,
-            name="IpcClientTransport",
-            daemon=True
-        )
+        self._thread = threading.Thread(target=self._thread_entry, name="IpcClientTransport", daemon=True)
         self._thread.start()
-        logger.info("IPC Client Plugin started (socket: %s)", self._socket_path)
+        logger.info(
+            "IPC Client Plugin started (transport=%s host=%s port=%s socket=%s)",
+            self._endpoint.transport,
+            self._endpoint.host,
+            self._endpoint.port,
+            self._endpoint.socket_path,
+        )
 
     def teardown(self) -> None:
-        """释放资源，确定性停止后台循环."""
-        logger.info("Stopping IPC Client Plugin...")
         self._stop_event.set()
-        
-        if self._loop and self._loop.is_running():
-            # 不要直接调用 self._loop.stop()，会引发 Event loop stopped before Future completed
-            # 正确的做法是向循环发送任务取消信号
-            if hasattr(self, '_main_task') and not getattr(self, '_main_task').done():
-                self._loop.call_soon_threadsafe(getattr(self, '_main_task').cancel)
-            
+        if self._loop and self._loop.is_running() and self._main_task and not self._main_task.done():
+            self._loop.call_soon_threadsafe(self._main_task.cancel)
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=5.0)
-            
-        logger.info("IPC Client Plugin stopped.")
+        logger.info("IPC Client Plugin stopped")
+
+    def set_runtime_endpoint_override(self, **overrides: Any) -> None:
+        """Set runtime-explicit endpoint overrides (highest precedence)."""
+        self._runtime_endpoint_override = dict(overrides)
 
     async def request(self, method: str, **params: Any) -> dict[str, Any]:
-        """发起 IPC 请求并返回标准化字典.
-        
-        采用瞬时连接，避免干扰长连接监听。
-        """
-        if not self._socket_path:
-            return {
-                "ok": False,
-                "result": None,
-                "error_code": ERR_DAEMON_OFFLINE,
-                "message": (
-                    "Socket path not configured. Set extensions.ipc-client.socket_path "
-                    f"or env {_DAEMON_SOCKET_ENV}."
-                ),
-            }
-        try:
-            reader, writer = await asyncio.open_unix_connection(self._socket_path)
-        except OSError as exc:
-            return {
-                "ok": False,
-                "result": None,
-                "error_code": ERR_DAEMON_OFFLINE,
-                "message": f"Cannot connect to daemon: {exc}"
-            }
+        endpoint = self._endpoint
+        if endpoint is None:
+            return self._error(ERR_CONFIG_INVALID, "IPC endpoint is not configured")
 
         try:
-            # 组装请求
+            reader, writer = await self._adapter.open_connection(endpoint)
+        except OSError as exc:
+            return self._error(ERR_DAEMON_OFFLINE, f"Cannot connect to daemon: {exc}")
+
+        try:
+            hello = await negotiate_hello(
+                reader,
+                writer,
+                role=ROLE_RPC,
+                transport=endpoint.transport,
+                capabilities=[],
+            )
+            self._limits = hello.limits
+            limits = hello.limits
+
             req_id = uuid.uuid4().hex[:8]
             req = IpcWireRequest(method=method, params=params, id=req_id)
-            
-            writer.write(codec.encode_message(req))
+            raw_request = codec.encode_message(req)
+            self._enforce_outgoing_frame(raw_request, limits.max_frame_bytes)
+            writer.write(raw_request)
             await writer.drain()
 
-            # 读取响应
-            line = await reader.readline()
+            timeout_ms = limits.request_timeout_ms
+            line = await asyncio.wait_for(reader.readline(), timeout=timeout_ms / 1000.0)
             if not line:
-                return {
-                    "ok": False,
-                    "result": None,
-                    "error_code": ERR_IPC_PROTOCOL_MISMATCH,
-                    "message": "Empty response from daemon"
-                }
+                return self._error(ERR_IPC_PROTOCOL_MISMATCH, "Empty response from daemon")
+            self._enforce_incoming_frame(line, limits.max_frame_bytes)
 
-            try:
-                resp = codec.decode_message(line)
-            except Exception as e:
-                return {
-                    "ok": False,
-                    "result": None,
-                    "error_code": ERR_IPC_PROTOCOL_MISMATCH,
-                    "message": f"Failed to parse IPC message: {e}"
-                }
-
+            resp = codec.decode_message(line)
             if not isinstance(resp, IpcWireResponse):
-                return {
-                    "ok": False,
-                    "result": None,
-                    "error_code": ERR_IPC_PROTOCOL_MISMATCH,
-                    "message": f"Unexpected message type: {type(resp)}"
-                }
-
+                return self._error(ERR_IPC_PROTOCOL_MISMATCH, f"Unexpected message type: {type(resp).__name__}")
             if resp.id != req_id:
+                return self._error(ERR_IPC_PROTOCOL_MISMATCH, "Request ID mismatch")
+            if resp.error is not None:
                 return {
                     "ok": False,
                     "result": None,
-                    "error_code": ERR_IPC_PROTOCOL_MISMATCH,
-                    "message": "Request ID mismatch"
+                    "error_code": resp.error.code,
+                    "message": resp.error.message,
                 }
-
-            return {
-                "ok": resp.error is None,
-                "result": resp.result,
-                "error_code": resp.error,
-                "message": None if resp.error is None else "Daemon returned error"
-            }
-
+            return {"ok": True, "result": resp.result, "error_code": None, "message": None}
+        except TimeoutError:
+            return self._error(ERR_INTERNAL, "Request timeout waiting daemon response")
+        except ValueError:
+            return self._error(ERR_IPC_PROTOCOL_MISMATCH, "Malformed IPC response frame")
+        except IpcProtocolError as exc:
+            return self._error(ERR_IPC_PROTOCOL_MISMATCH, str(exc))
         except Exception as exc:
             logger.exception("IPC request failed")
-            return {
-                "ok": False,
-                "result": None,
-                "error_code": ERR_INTERNAL,
-                "message": str(exc)
-            }
+            return self._error(ERR_INTERNAL, str(exc))
         finally:
             writer.close()
             await writer.wait_closed()
 
-    # ── 内部实现 ──
-
     def _thread_entry(self) -> None:
-        """子线程入口，维护 asyncio 循环."""
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         try:
             self._main_task = self._loop.create_task(self._listen_loop())
             self._loop.run_until_complete(self._main_task)
         except asyncio.CancelledError:
-            pass # 正常取消
+            pass
         except Exception:
             logger.exception("Unexpected error in IPC listen loop")
         finally:
-            # 清理所有挂起的任务，确保 writer.close() 底层回调执行完
             try:
                 pending = asyncio.all_tasks(self._loop)
                 for task in pending:
@@ -211,8 +179,8 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
             self._loop.close()
 
     async def _listen_loop(self) -> None:
-        """主监听循环（带 Exponential Backoff）."""
-        if not self._socket_path:
+        endpoint = self._endpoint
+        if endpoint is None:
             return
 
         backoff = 0.5
@@ -220,51 +188,141 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
 
         while not self._stop_event.is_set():
             try:
-                reader, writer = await asyncio.open_unix_connection(self._socket_path)
-                backoff = 0.5  # 连接成功，重置退避
-                logger.debug("IPC connected to %s", self._socket_path)
+                reader, writer = await self._adapter.open_connection(endpoint)
+                hello = await negotiate_hello(
+                    reader,
+                    writer,
+                    role=ROLE_PUSH,
+                    transport=endpoint.transport,
+                    capabilities=["push.timer"],
+                )
+                self._limits = hello.limits
+                self._push_capabilities = set(hello.capabilities)
+                limits = hello.limits
+                missed_heartbeats = 0
+                backoff = 0.5
 
                 try:
                     while not self._stop_event.is_set():
-                        line = await reader.readline()
-                        if not line:
-                            break  # 连接断开
-                        
                         try:
-                            msg = codec.decode_message(line)
-                            if isinstance(msg, IpcWirePush):
-                                # 核心翻译逻辑
-                                payload = adapt_ipc_message(msg.event, msg.data)
-                                if self._ctx:
-                                    self._ctx.event_bus.emit_background(
-                                        HudEventType.IPC_MESSAGE_RECEIVED, 
-                                        payload
-                                    )
-                        except Exception as exc:
-                            logger.error("Failed to decode or dispatch IPC push: %s", exc)
-
+                            line = await asyncio.wait_for(reader.readline(), timeout=limits.heartbeat_interval_ms / 1000.0)
+                        except asyncio.TimeoutError:
+                            missed_heartbeats += 1
+                            if missed_heartbeats >= limits.heartbeat_miss_threshold:
+                                raise IpcProtocolError(
+                                    "push channel heartbeat timeout: reached heartbeat_miss_threshold"
+                                )
+                            continue
+                        if not line:
+                            raise IpcProtocolError("push channel closed by daemon")
+                        self._enforce_incoming_frame(line, limits.max_frame_bytes)
+                        msg = codec.decode_message(line)
+                        if isinstance(msg, IpcWirePush):
+                            missed_heartbeats = 0
+                            if msg.event == EVENT_SESSION_KEEPALIVE:
+                                continue
+                            if msg.event == "timer.tick" and "push.timer" not in self._push_capabilities:
+                                continue
+                            payload = adapt_ipc_message(msg.event, msg.data)
+                            if self._ctx:
+                                self._ctx.event_bus.emit_background(HudEventType.IPC_MESSAGE_RECEIVED, payload)
                 finally:
+                    self._push_capabilities.clear()
                     writer.close()
-                    # 这里不用 wait_closed 因为可能已经在 stop 了
-
+                    await writer.wait_closed()
             except asyncio.CancelledError:
                 break
+            except (IpcProtocolError, ValueError) as exc:
+                if self._stop_event.is_set():
+                    break
+                logger.warning("IPC protocol mismatch: %s", exc)
+                await self._sleep_with_backoff(backoff)
+                backoff = min(backoff * 1.5 + random.uniform(0.0, 0.1 * backoff), max_backoff)
             except OSError:
                 if not self._stop_event.is_set():
                     logger.warning("Daemon offline, retrying in %.1fs...", backoff)
-                    try:
-                        await asyncio.wait_for(self._wait_for_stop_async(), timeout=backoff)
-                    except asyncio.TimeoutError:
-                        # 加入小幅随机抖动，防止多客户端同时重连引发惊群效应
-                        jitter = random.uniform(0.0, 0.1 * backoff)
-                        backoff = min(backoff * 1.5 + jitter, max_backoff)
+                    await self._sleep_with_backoff(backoff)
+                    backoff = min(backoff * 1.5 + random.uniform(0.0, 0.1 * backoff), max_backoff)
             except Exception:
                 if self._stop_event.is_set():
                     break
                 logger.exception("Error in listen loop, retrying...")
                 await asyncio.sleep(1)
 
+    async def _sleep_with_backoff(self, backoff: float) -> None:
+        try:
+            await asyncio.wait_for(self._wait_for_stop_async(), timeout=backoff)
+        except asyncio.TimeoutError:
+            pass
+
     async def _wait_for_stop_async(self) -> None:
-        """让异步循环能响应线程停止信号."""
         while not self._stop_event.is_set():
             await asyncio.sleep(0.1)
+
+    def _resolve_endpoint(self, ctx: HudAdminContext) -> IpcEndpoint | None:
+        cfg = ctx.get_extension_config("ipc-client")
+        defaults = ctx.get_connection_config()
+        runtime = self._runtime_endpoint_override
+
+        transport = str(
+            runtime.get("transport")
+            or os.environ.get(_DAEMON_TRANSPORT_ENV)
+            or cfg.get("transport")
+            or defaults.get("transport")
+            or TRANSPORT_TCP
+        ).lower()
+
+        host = str(
+            runtime.get("host")
+            or os.environ.get(_DAEMON_HOST_ENV)
+            or cfg.get("host")
+            or defaults.get("host")
+            or "127.0.0.1"
+        )
+        port_raw = (
+            runtime.get("port")
+            or os.environ.get(_DAEMON_PORT_ENV)
+            or cfg.get("port")
+            or defaults.get("port")
+            or 54321
+        )
+        socket_path = str(
+            runtime.get("socket_path")
+            or os.environ.get(_DAEMON_SOCKET_ENV)
+            or cfg.get("socket_path")
+            or defaults.get("socket_path")
+            or ""
+        )
+
+        try:
+            port = int(port_raw)
+        except Exception:
+            logger.error("Invalid IPC port: %r", port_raw)
+            return None
+
+        if transport == TRANSPORT_UNIX:
+            if not socket_path:
+                logger.error("IPC unix transport requires socket_path")
+                return None
+            return IpcEndpoint(transport=transport, host="", port=0, socket_path=os.path.expanduser(socket_path))
+
+        if transport == TRANSPORT_TCP:
+            return IpcEndpoint(transport=transport, host=host, port=port, socket_path="")
+
+        logger.error("Unsupported IPC transport: %s", transport)
+        return None
+
+    def _error(self, code: str, message: str) -> dict[str, Any]:
+        return {"ok": False, "result": None, "error_code": code, "message": message}
+
+    def _enforce_outgoing_frame(self, data: bytes, max_frame_bytes: int) -> None:
+        if len(data) > max_frame_bytes:
+            raise IpcProtocolError(
+                f"outgoing frame exceeds negotiated max_frame_bytes ({len(data)} > {max_frame_bytes})"
+            )
+
+    def _enforce_incoming_frame(self, data: bytes, max_frame_bytes: int) -> None:
+        if len(data) > max_frame_bytes:
+            raise IpcProtocolError(
+                f"incoming frame exceeds negotiated max_frame_bytes ({len(data)} > {max_frame_bytes})"
+            )

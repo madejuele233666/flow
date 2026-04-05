@@ -8,12 +8,19 @@ plugins = ["mouse-radar"]
 admin_plugins = ["ipc-client"]
 safe_mode = false
 
+[connection]
+transport = "tcp"
+host = "127.0.0.1"
+port = 54321
+# socket_path is used when transport = "unix"
+socket_path = "/absolute/path/to/daemon.sock"
+
 [extensions]
 # 插件专属配置
 [extensions.ipc-client]
-# Path to backend daemon socket.
-# You can also set env FLOW_DAEMON_SOCKET instead of hardcoding here.
-socket_path = "/absolute/path/to/daemon.sock"
+# Plugin-level override with highest priority
+# transport = "unix"
+# socket_path = "/absolute/path/to/daemon.sock"
 
 [worker]
 max_retries = 2

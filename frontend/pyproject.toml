@@ -12,6 +12,7 @@ license = {text = "MIT"}
 
 dependencies = [
     "toml>=0.10",
+    "flow-ipc @ file:../shared",
 ]
 
 [project.optional-dependencies]

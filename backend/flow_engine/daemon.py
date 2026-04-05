@@ -56,9 +56,14 @@ class FlowDaemon:
         self._ipc = IPCServer(
             tcp_host=self._app.config.ipc.tcp_host,
             tcp_port=self._app.config.ipc.tcp_port,
+            max_frame_bytes=self._app.config.ipc.max_frame_bytes,
+            request_timeout_ms=self._app.config.ipc.request_timeout_ms,
+            heartbeat_interval_ms=self._app.config.ipc.heartbeat_interval_ms,
+            heartbeat_miss_threshold=self._app.config.ipc.heartbeat_miss_threshold,
         )
         self._pid_path = DEFAULT_PID_PATH
         self._running = False
+        self._focus_timer_task: asyncio.Task[None] | None = None
 
         # 注册 IPC 方法
         self._register_methods()
@@ -88,6 +93,7 @@ class FlowDaemon:
     async def stop(self) -> None:
         """优雅关闭 Daemon."""
         self._running = False
+        await self._stop_focus_timer()
         await self._ipc.stop()
         await self._app.shutdown()
         self._remove_pid()
@@ -288,6 +294,7 @@ class FlowDaemon:
         await self._app.engine.transition(task, TaskState.IN_PROGRESS)
         task.started_at = datetime.now()
         await self._app.repo.save_all(tasks)
+        self._start_focus_timer(task.id)
         return {
             "id": task.id,
             "title": task.title,
@@ -303,6 +310,7 @@ class FlowDaemon:
 
         await self._app.engine.transition(active, TaskState.DONE)
         await self._app.repo.save_all(tasks)
+        await self._stop_focus_timer()
         return {"id": active.id, "title": active.title}
 
     async def _handle_task_pause(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -314,6 +322,7 @@ class FlowDaemon:
 
         await self._app.engine.transition(active, TaskState.PAUSED)
         await self._app.repo.save_all(tasks)
+        await self._stop_focus_timer()
         return {"id": active.id, "title": active.title}
 
     async def _handle_task_resume(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -327,9 +336,11 @@ class FlowDaemon:
         if task.state == TaskState.BLOCKED:
             await self._app.engine.transition(task, TaskState.READY)
             task.block_reason = ""
+            await self._stop_focus_timer()
         elif task.state == TaskState.PAUSED:
             paused = await self._app.engine.ensure_single_active(tasks, task_id)
             await self._app.engine.transition(task, TaskState.IN_PROGRESS)
+            self._start_focus_timer(task.id)
         else:
             raise ValueError(f"task #{task_id} is {task.state.value}, cannot resume")
 
@@ -348,6 +359,7 @@ class FlowDaemon:
         await self._app.engine.transition(task, TaskState.BLOCKED)
         task.block_reason = reason
         await self._app.repo.save_all(tasks)
+        await self._stop_focus_timer()
         return {"id": task.id, "title": task.title, "reason": reason}
 
     async def _handle_task_breakdown(self, params: dict[str, Any]) -> list[str]:
@@ -409,12 +421,35 @@ class FlowDaemon:
 
         此方法由 task.start 的 IPC handler 自动触发。
         """
+        tick = 0
         while self._running:
+            tick += 1
             await self._ipc.broadcast(Push(
                 event="timer.tick",
-                data={"task_id": task_id, "type": "focus"},
-            ))
+                data={
+                    "tick": tick,
+                    "elapsed": tick,
+                    "task_id": task_id,
+                    "type": "focus",
+                },
+            ), required_capability="push.timer")
             await asyncio.sleep(1)
+
+    async def _stop_focus_timer(self) -> None:
+        task = self._focus_timer_task
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        self._focus_timer_task = None
+
+    def _start_focus_timer(self, task_id: int) -> None:
+        if self._focus_timer_task is not None and not self._focus_timer_task.done():
+            self._focus_timer_task.cancel()
+        self._focus_timer_task = asyncio.create_task(self.start_focus_timer(task_id))
 
 
 # ---------------------------------------------------------------------------

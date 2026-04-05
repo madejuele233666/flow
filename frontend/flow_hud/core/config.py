@@ -74,6 +74,12 @@ class HudConfig:
     # ── 插件开放配置（透传） ──
     extensions: dict[str, Any] = field(default_factory=dict)
 
+    # ── IPC 连接默认值（可被插件显式配置/环境变量覆盖） ──
+    connection_transport: str = "tcp"
+    connection_host: str = "127.0.0.1"
+    connection_port: int = 54321
+    connection_socket_path: str = ""
+
     @classmethod
     def load(cls, config_path: Path | None = None) -> HudConfig:
         """从 hud_config.toml 加载配置，优先级: 环境变量 > toml > 默认值."""
@@ -124,6 +130,17 @@ class HudConfig:
         if "worker" in raw:
             if "max_retries" in raw["worker"]:
                 config.worker_max_retries = int(raw["worker"]["max_retries"])
+
+        if "connection" in raw:
+            conn = raw["connection"]
+            if "transport" in conn:
+                config.connection_transport = str(conn["transport"])
+            if "host" in conn:
+                config.connection_host = str(conn["host"])
+            if "port" in conn:
+                config.connection_port = int(conn["port"])
+            if "socket_path" in conn:
+                config.connection_socket_path = str(conn["socket_path"])
 
         if "extensions" in raw:
             config.extensions = raw["extensions"]

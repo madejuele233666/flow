@@ -33,7 +33,10 @@ def adapt_ipc_message(method: str, data: dict[str, Any]) -> object:
     """
     try:
         if method == "timer.tick":
-            return TimerTickPayload(tick=data.get("tick", 0))
+            tick = data.get("tick")
+            if tick is None:
+                tick = data.get("elapsed", 0)
+            return TimerTickPayload(tick=int(tick))
         
         if method == "task.created":
             return TaskCreatedIpcPayload(task_id=data.get("task_id", 0))

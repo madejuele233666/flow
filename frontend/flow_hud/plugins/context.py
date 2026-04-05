@@ -141,6 +141,15 @@ class HudPluginContext:
         """
         return self._config.extensions.get(plugin_name, {})
 
+    def get_connection_config(self) -> dict[str, Any]:
+        """获取 HUD 连接默认配置（来自 [connection]）。"""
+        return {
+            "transport": self._config.connection_transport,
+            "host": self._config.connection_host,
+            "port": self._config.connection_port,
+            "socket_path": self._config.connection_socket_path,
+        }
+
     # ── 只读配置 ──
 
     @property

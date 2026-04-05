@@ -1,0 +1,126 @@
+{
+  "session_id": "b83bd693-50c3-40cf-b2ab-77b169b1cd4c",
+  "response": "```json\n{\n  \"change\": \"refactor-ipc-protocol-v2\",\n  \"mode\": \"secondary_verification\",\n  \"final_assessment\": \"pass\",\n  \"findings\": [\n    {\n      \"id\": \"IPC-001\",\n      \"severity\": \"minor\",\n      \"dimension\": \"completeness\",\n      \"artifact\": \"frontend/flow_hud/plugins/ipc/plugin.py\",\n      \"problem\": \"RPC channel is not persistently initialized during plugin setup.\",\n      \"evidence\": \"IpcClientPlugin.request opens a new connection and performs hello negotiation for every request, whereas the spec suggests it should be prepared 'before serving HUD traffic' during setup.\",\n      \"recommendation\": \"Consider implementing a persistent or pooled RPC connection managed by the plugin to avoid redundant handshake overhead for frequent requests.\",\n      \"redirect_layer\": \"frontend\",\n      \"blocking\": false,\n      \"auto_fixable\": false\n    },\n    {\n      \"id\": \"IPC-002\",\n      \"severity\": \"minor\",\n      \"dimension\": \"consistency\",\n      \"artifact\": \"shared/flow_ipc/codec.py\",\n      \"problem\": \"Request frame validation allows missing 'params' field.\",\n      \"evidence\": \"shared/flow_ipc/codec.py:255 defaults params to {} if missing, while the spec (ipc-protocol-v2-contract/spec.md) lists it as a required field for request frames.\",\n      \"recommendation\": \"Update _request_from_dict to raise ProtocolDecodeError if 'params' is not present in the raw dictionary to ensure strict compliance with the wire schema requirement.\",\n      \"redirect_layer\": \"contract\",\n      \"blocking\": false,\n      \"auto_fixable\": true\n    }\n  ]\n}\n```",
+  "stats": {
+    "models": {
+      "gemini-2.5-flash-lite": {
+        "api": {
+          "totalRequests": 1,
+          "totalErrors": 0,
+          "totalLatencyMs": 2308
+        },
+        "tokens": {
+          "input": 3140,
+          "prompt": 3140,
+          "candidates": 101,
+          "total": 3608,
+          "cached": 0,
+          "thoughts": 367,
+          "tool": 0
+        },
+        "roles": {
+          "utility_router": {
+            "totalRequests": 1,
+            "totalErrors": 0,
+            "totalLatencyMs": 2308,
+            "tokens": {
+              "input": 3140,
+              "prompt": 3140,
+              "candidates": 101,
+              "total": 3608,
+              "cached": 0,
+              "thoughts": 367,
+              "tool": 0
+            }
+          }
+        }
+      },
+      "gemini-3-flash-preview": {
+        "api": {
+          "totalRequests": 11,
+          "totalErrors": 0,
+          "totalLatencyMs": 84579
+        },
+        "tokens": {
+          "input": 56287,
+          "prompt": 254444,
+          "candidates": 1251,
+          "total": 264856,
+          "cached": 198157,
+          "thoughts": 9161,
+          "tool": 0
+        },
+        "roles": {
+          "main": {
+            "totalRequests": 11,
+            "totalErrors": 0,
+            "totalLatencyMs": 84579,
+            "tokens": {
+              "input": 56287,
+              "prompt": 254444,
+              "candidates": 1251,
+              "total": 264856,
+              "cached": 198157,
+              "thoughts": 9161,
+              "tool": 0
+            }
+          }
+        }
+      }
+    },
+    "tools": {
+      "totalCalls": 21,
+      "totalSuccess": 21,
+      "totalFail": 0,
+      "totalDurationMs": 215,
+      "totalDecisions": {
+        "accept": 21,
+        "reject": 0,
+        "modify": 0,
+        "auto_accept": 0
+      },
+      "byName": {
+        "list_directory": {
+          "count": 5,
+          "success": 5,
+          "fail": 0,
+          "durationMs": 52,
+          "decisions": {
+            "accept": 5,
+            "reject": 0,
+            "modify": 0,
+            "auto_accept": 0
+          }
+        },
+        "read_file": {
+          "count": 15,
+          "success": 15,
+          "fail": 0,
+          "durationMs": 124,
+          "decisions": {
+            "accept": 15,
+            "reject": 0,
+            "modify": 0,
+            "auto_accept": 0
+          }
+        },
+        "grep_search": {
+          "count": 1,
+          "success": 1,
+          "fail": 0,
+          "durationMs": 39,
+          "decisions": {
+            "accept": 1,
+            "reject": 0,
+            "modify": 0,
+            "auto_accept": 0
+          }
+        }
+      }
+    },
+    "files": {
+      "totalLinesAdded": 0,
+      "totalLinesRemoved": 0
+    }
+  }
+}

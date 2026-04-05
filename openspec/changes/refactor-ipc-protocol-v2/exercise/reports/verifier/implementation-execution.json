@@ -1,0 +1,18 @@
+{
+  "change": "refactor-ipc-protocol-v2",
+  "mode": "implementation",
+  "template_id": "verify-reviewer-inline-v1",
+  "findings_contract": "shared-findings-v1",
+  "agent_id": "019d5d8f-4c34-7002-a95d-aecc94f6c3d4",
+  "start_at": "2026-04-05T12:14:40Z",
+  "end_at": "2026-04-05T12:15:44Z",
+  "final_state": "pass_with_warnings",
+  "originating_phase": "apply",
+  "continuation_target_on_pass": "complete",
+  "routing_target_on_block": "openspec-repair-change",
+  "verifier_output_path": "openspec/changes/refactor-ipc-protocol-v2/exercise/reports/verifier/implementation-findings.json",
+  "gemini_raw_path": "openspec/changes/refactor-ipc-protocol-v2/exercise/reports/gemini/implementation-raw.json",
+  "gemini_report_path": "openspec/changes/refactor-ipc-protocol-v2/exercise/reports/gemini/implementation-report.json",
+  "gemini_runner_contract": "gemini-capture",
+  "gemini_resolved_command": "gemini -y --output-format json -p \"You are a secondary verifier for OpenSpec ai-enforced-workflow. Review implementation for change refactor-ipc-protocol-v2 and return ONLY normalized JSON with keys change, mode, final_assessment, findings (id,severity,dimension,artifact,problem,evidence,recommendation,redirect_layer,blocking,auto_fixable). Evidence scope: shared/flow_ipc backend/flow_engine/ipc frontend/flow_hud/plugins/ipc backend/tests frontend/tests/hud/test_ipc_client_plugin.py openspec/changes/refactor-ipc-protocol-v2/specs/ipc-protocol-v2-contract/spec.md openspec/changes/refactor-ipc-protocol-v2/specs/tcp-ipc-transport/spec.md openspec/changes/refactor-ipc-protocol-v2/specs/ipc-client/spec.md\""
+}

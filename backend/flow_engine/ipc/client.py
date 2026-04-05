@@ -1,11 +1,4 @@
-"""IPC Client — CLI/TUI 端的瘦连接器.
-
-设计要点：
-- 同一个 Client 类同时服务 CLI（一次性请求）和 TUI（长连接 + 监听推送）。
-- connect() → call() → close() 的清晰生命周期。
-- listen_pushes() 异步生成器：TUI 用它持续消费 Daemon 的广播推送。
-- 与传输层完全解耦：只使用 protocol.py 的 encode/decode。
-"""
+"""IPC client with V2 hello-first session negotiation."""
 
 from __future__ import annotations
 
@@ -15,51 +8,56 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-from flow_engine.ipc.protocol import Push, Request, Response, decode, encode
+from flow_engine.ipc.protocol import (
+    HelloLimits,
+    METHOD_SESSION_HELLO,
+    METHOD_SESSION_PING,
+    PROTOCOL_VERSION,
+    Push,
+    Request,
+    ROLE_PUSH,
+    ROLE_RPC,
+    Response,
+    TRANSPORT_UNIX,
+    decode,
+    encode,
+    make_hello_params,
+    make_request,
+    parse_hello_result,
+)
 from flow_engine.ipc.server import DEFAULT_SOCKET_PATH
 
 logger = logging.getLogger(__name__)
 
 
 class IPCClient:
-    """瘦客户端 — 连接 Daemon 的 Unix Domain Socket.
-
-    用法 (CLI 一次性请求):
-        async with IPCClient() as client:
-            result = await client.call("task.list")
-
-    用法 (TUI 长连接):
-        client = IPCClient()
-        await client.connect()
-        async for push in client.listen_pushes():
-            render(push)
-    """
+    """Client connector for daemon IPC."""
 
     def __init__(self, socket_path: Path | None = None) -> None:
         self._socket_path = socket_path or DEFAULT_SOCKET_PATH
-        self._reader: asyncio.StreamReader | None = None
-        self._writer: asyncio.StreamWriter | None = None
-
-    # ── 生命周期 ──
+        self._rpc_reader: asyncio.StreamReader | None = None
+        self._rpc_writer: asyncio.StreamWriter | None = None
+        self._push_reader: asyncio.StreamReader | None = None
+        self._push_writer: asyncio.StreamWriter | None = None
+        self._limits: HelloLimits | None = None
 
     async def connect(self) -> None:
-        """建立到 Daemon 的连接."""
         if not self._socket_path.exists():
             raise ConnectionError(
                 f"Daemon 未运行: socket 文件不存在 ({self._socket_path})\n"
                 "请先运行: flow daemon start"
             )
-        self._reader, self._writer = await asyncio.open_unix_connection(
-            str(self._socket_path),
-        )
+        self._rpc_reader, self._rpc_writer = await asyncio.open_unix_connection(str(self._socket_path))
+        await self._hello(self._rpc_reader, self._rpc_writer, role=ROLE_RPC, transport=TRANSPORT_UNIX)
         logger.debug("connected to daemon at %s", self._socket_path)
 
     async def close(self) -> None:
-        """断开连接."""
-        if self._writer:
-            self._writer.close()
-            self._writer = None
-            self._reader = None
+        await self._close_writer(self._push_writer)
+        await self._close_writer(self._rpc_writer)
+        self._push_reader = None
+        self._push_writer = None
+        self._rpc_reader = None
+        self._rpc_writer = None
 
     async def __aenter__(self) -> IPCClient:
         await self.connect()
@@ -68,66 +66,106 @@ class IPCClient:
     async def __aexit__(self, *args: Any) -> None:
         await self.close()
 
-    # ── 请求/响应 (CLI 用) ──
-
     async def call(self, method: str, **params: Any) -> Any:
-        """发送 RPC 请求并等待回复.
-
-        Args:
-            method: 远程方法名。
-            **params: 方法参数。
-
-        Returns:
-            Daemon 返回的 result 值。
-
-        Raises:
-            ConnectionError: 未连接。
-            RuntimeError: Daemon 返回了错误。
-        """
-        if not self._writer or not self._reader:
+        if not self._rpc_writer or not self._rpc_reader:
             raise ConnectionError("not connected to daemon")
 
-        request = Request(method=method, params=params)
-        self._writer.write(encode(request))
-        await self._writer.drain()
+        timeout_ms = self._limits.request_timeout_ms if self._limits else 30000
+        request = make_request(method, params)
+        self._rpc_writer.write(encode(request))
+        await self._rpc_writer.drain()
 
-        line = await self._reader.readline()
+        try:
+            line = await asyncio.wait_for(self._rpc_reader.readline(), timeout=timeout_ms / 1000.0)
+        except TimeoutError as exc:
+            raise RuntimeError(f"daemon error: request timeout after {timeout_ms}ms") from exc
         if not line:
             raise ConnectionError("daemon closed connection")
 
         msg = decode(line)
         if not isinstance(msg, Response):
             raise RuntimeError(f"expected Response, got {type(msg).__name__}")
-
-        if not msg.ok:
-            raise RuntimeError(f"daemon error: {msg.error}")
-
+        if msg.error is not None:
+            raise RuntimeError(f"daemon error [{msg.error.code}]: {msg.error.message}")
         return msg.result
 
-    # ── 推送监听 (TUI 用) ──
+    async def ping(self) -> bool:
+        result = await self.call(METHOD_SESSION_PING)
+        return isinstance(result, dict) and result.get("pong") is True
 
     async def listen_pushes(self) -> AsyncIterator[Push]:
-        """持续监听 Daemon 的推送消息 — 异步生成器.
-
-        TUI 使用此方法在事件循环中持续接收 TimerTick 等广播：
-            async for push in client.listen_pushes():
-                if push.event == "timer.tick":
-                    update_timer_display(push.data)
-        """
-        if not self._reader:
-            raise ConnectionError("not connected to daemon")
+        await self._ensure_push_channel()
+        if not self._push_reader:
+            raise ConnectionError("push channel unavailable")
 
         while True:
-            line = await self._reader.readline()
+            line = await self._push_reader.readline()
             if not line:
-                break  # Daemon 断开
-
+                break
             try:
                 msg = decode(line)
                 if isinstance(msg, Push):
                     yield msg
-                elif isinstance(msg, Response):
-                    # 在 listen 模式下收到 Response 是不期望的，忽略
-                    logger.debug("unexpected Response during listen: %s", msg.id)
             except Exception as exc:
                 logger.warning("malformed push message: %s", exc)
+
+        await self._close_writer(self._push_writer)
+        self._push_reader = None
+        self._push_writer = None
+
+    async def _ensure_push_channel(self) -> None:
+        if self._push_reader and self._push_writer:
+            return
+        if not self._socket_path.exists():
+            raise ConnectionError(f"daemon socket not found: {self._socket_path}")
+        self._push_reader, self._push_writer = await asyncio.open_unix_connection(str(self._socket_path))
+        await self._hello(self._push_reader, self._push_writer, role=ROLE_PUSH, transport=TRANSPORT_UNIX)
+
+    async def _hello(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        *,
+        role: str,
+        transport: str,
+    ) -> None:
+        hello_params = make_hello_params(
+            client_name="flow-engine-client",
+            client_version="0.1.0",
+            role=role,
+            transport=transport,
+            protocol_min=PROTOCOL_VERSION,
+            protocol_max=PROTOCOL_VERSION,
+            capabilities=[],
+        )
+        request = make_request(METHOD_SESSION_HELLO, hello_params)
+        writer.write(encode(request))
+        await writer.drain()
+
+        line = await reader.readline()
+        if not line:
+            raise ConnectionError("daemon closed connection during hello")
+        msg = decode(line)
+        if not isinstance(msg, Response):
+            raise ConnectionError(f"hello expects response, got {type(msg).__name__}")
+        if msg.error is not None:
+            raise ConnectionError(f"hello failed [{msg.error.code}]: {msg.error.message}")
+        hello = parse_hello_result(msg.result)
+        if hello.protocol_version != PROTOCOL_VERSION:
+            raise ConnectionError(
+                f"hello protocol_version mismatch: expected {PROTOCOL_VERSION}, got {hello.protocol_version}"
+            )
+        if hello.role != role:
+            raise ConnectionError(f"hello role mismatch: expected {role}, got {hello.role}")
+        if hello.transport != transport:
+            raise ConnectionError(f"hello transport mismatch: expected {transport}, got {hello.transport}")
+        self._limits = hello.limits
+
+    async def _close_writer(self, writer: asyncio.StreamWriter | None) -> None:
+        if writer is None:
+            return
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass

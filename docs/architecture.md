@@ -142,10 +142,21 @@ class TaskRepository(ABC):
 
 ## 7. 第六层：双端 IPC 通信协议
 
-极简却强悍的 JSON-Lines 协议。定义在 `ipc/protocol.py`。
-- **Request (客户端 -> 后端)**: 带 UUID 的调用体，如 `{"method": "task.start", "params": {"task_id": 1}, "id": "uuid8"}`
-- **Response (后端 -> 客户端)**: `{"id": "uuid8", "result": ...}`
-- **Push (持续播报)**: 由后端的监控脚本主动向当前的前端推报数据，比如专注时钟跳动（`TimerTick`）或者建议喝水休息（`BreakSuggested`）。
+当前实现基线仍是基于 NDJSON 的轻量协议，但它只够支撑同仓库、同环境下的快速迭代，还不足以作为前后端拆分后长期演进的稳定边界。
+
+新版协议设计已经单独整理为文档：
+
+- `docs/ipc-protocol-v2.md`
+
+该设计将原有 `Request / Response / Push` 模型保留下来，但补齐了当前架构缺失的几个关键约束：
+
+- **传输与协议解耦**：统一线格式，同时支持 `unix` 与 `tcp` 两种 transport profile。
+- **显式握手**：所有连接必须先完成 `session.hello`，协商 `protocol_version`、`role`、`capabilities` 与运行时限制。
+- **连接角色化**：明确区分 `rpc` 连接与 `push` 连接，避免当前“靠实现约定规避消息串流歧义”的做法。
+- **结构化错误语义**：从自由文本错误提升到稳定的 `error.code / message / retryable / data` 契约。
+- **验证钩子前置**：将 golden codec、握手矩阵、transport smoke tests 和版本偏斜测试直接纳入协议定义，而不是事后补测试。
+
+如果要支撑“Linux/WSL 后端 + Windows HUD”以及未来的纯 Windows 路径，后续实现应以该文档为准，而不是继续扩展当前 V1 的隐式约定。
 
 ---
 

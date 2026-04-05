@@ -18,9 +18,15 @@ pip install -e ".[dev,gui]"
 
 ```bash
 cd frontend
-export FLOW_DAEMON_SOCKET="/absolute/path/to/daemon.sock"
 python -m flow_hud.main
 ```
+
+Connection endpoint precedence:
+
+1. `[extensions.ipc-client]` explicit plugin fields (`transport/host/port/socket_path`)
+2. env overrides (`FLOW_DAEMON_TRANSPORT`, `FLOW_DAEMON_HOST`, `FLOW_DAEMON_PORT`, `FLOW_DAEMON_SOCKET`)
+3. `[connection]` defaults in `hud_config.toml`
+4. built-in defaults (`tcp`, `127.0.0.1`, `54321`)
 
 ## Test
 

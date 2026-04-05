@@ -148,6 +148,10 @@ class IPCConfig:
 
     tcp_host: str = "127.0.0.1"   # TCP 监听地址 (0.0.0.0 允许和内网其他机器连接)
     tcp_port: int = 54321          # TCP 监听端口
+    max_frame_bytes: int = 65536
+    request_timeout_ms: int = 30000
+    heartbeat_interval_ms: int = 15000
+    heartbeat_miss_threshold: int = 2
 
 
 @dataclass

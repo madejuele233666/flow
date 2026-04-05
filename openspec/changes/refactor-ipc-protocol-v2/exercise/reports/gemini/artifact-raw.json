@@ -1,0 +1,27 @@
+{
+  "session_id": "c7625eff-f0d1-40c5-a4cb-5ae13c2cad0c",
+  "response": "```json\n{\n  \"change\": \"refactor-ipc-protocol-v2\",\n  \"mode\": \"artifact\",\n  \"final_assessment\": \"PASS\",\n  \"findings\": [\n    {\n      \"id\": \"IPC-V2-ALIGNED\",\n      \"severity\": \"INFO\",\n      \"dimension\": \"consistency\",\n      \"artifact\": \"design.md\",\n      \"problem\": \"Decision 6 regarding configuration priority is consistently mapped across design, specs, and tasks.\",\n      \"evidence\": \"design.md Decision 6 priority matches specs/tcp-ipc-transport/spec.md and tasks.md 2.6.\",\n      \"recommendation\": \"Maintain this level of cross-artifact traceability.\",\n      \"redirect_layer\": null,\n      \"blocking\": false,\n      \"auto_fixable\": false\n    },\n    {\n      \"id\": \"LIMITS-SCHEMA-DEFINED\",\n      \"severity\": \"INFO\",\n      \"dimension\": \"completeness\",\n      \"artifact\": \"specs/ipc-protocol-v2-contract/spec.md\",\n      \"problem\": \"Handshake limits (max_frame_bytes, etc.) are explicitly defined with units and enforcement scenarios.\",\n      \"evidence\": \"Requirement: Negotiated limits schema SHALL be concrete in spec.md.\",\n      \"recommendation\": \"Ensure shared contract package implements these as numeric types with validation.\",\n      \"redirect_layer\": null,\n      \"blocking\": false,\n      \"auto_fixable\": false\n    },\n    {\n      \"id\": \"STRICT-VERIFICATION-PLAN\",\n      \"severity\": \"INFO\",\n      \"dimension\": \"safety\",\n      \"artifact\": \"tasks.md\",\n      \"problem\": \"Verification checkpoints 4.3 and 4.5 explicitly enforce the STRICT risk tier requirements.\",\n      \"evidence\": \"Tasks 4.1-4.5 define exact reporting paths and Gemini dual-gate policies.\",\n      \"recommendation\": \"Ensure verifier-subagent has access to the specified report directories.\",\n      \"redirect_layer\": null,\n      \"blocking\": false,\n      \"auto_fixable\": false\n    }\n  ]\n}\n```",
+  "stats": {
+    "models": {
+      "gemini-2.5-flash-lite": {
+        "api": {
+          "totalRequests": 1,
+          "totalErrors": 0,
+          "totalLatencyMs": 3435
+        }
+      },
+      "gemini-3-flash-preview": {
+        "api": {
+          "totalRequests": 9,
+          "totalErrors": 0,
+          "totalLatencyMs": 49402
+        }
+      }
+    },
+    "tools": {
+      "totalCalls": 9,
+      "totalSuccess": 9,
+      "totalFail": 0
+    }
+  }
+}

@@ -1,67 +1,96 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import sys
+from pathlib import Path
 from typing import Any, Protocol
 
+try:
+    from flow_ipc import (
+        ERR_DAEMON_OFFLINE,
+        ERR_INTERNAL,
+        ErrorObject,
+        EVENT_SESSION_KEEPALIVE,
+        HelloLimits,
+        HelloResult,
+        METHOD_SESSION_BYE,
+        METHOD_SESSION_HELLO,
+        METHOD_SESSION_PING,
+        PROTOCOL_VERSION,
+        PushFrame,
+        RequestFrame,
+        ResponseFrame,
+        ROLE_PUSH,
+        ROLE_RPC,
+        TRANSPORT_TCP,
+        TRANSPORT_UNIX,
+        make_hello_params,
+        parse_hello_result,
+    )
+except ModuleNotFoundError:
+    shared_dir = Path(__file__).resolve().parents[4] / "shared"
+    if str(shared_dir) not in sys.path:
+        sys.path.insert(0, str(shared_dir))
+    from flow_ipc import (  # type: ignore[no-redef]
+        ERR_DAEMON_OFFLINE,
+        ERR_INTERNAL,
+        ErrorObject,
+        EVENT_SESSION_KEEPALIVE,
+        HelloLimits,
+        HelloResult,
+        METHOD_SESSION_BYE,
+        METHOD_SESSION_HELLO,
+        METHOD_SESSION_PING,
+        PROTOCOL_VERSION,
+        PushFrame,
+        RequestFrame,
+        ResponseFrame,
+        ROLE_PUSH,
+        ROLE_RPC,
+        TRANSPORT_TCP,
+        TRANSPORT_UNIX,
+        make_hello_params,
+        parse_hello_result,
+    )
 
-# ---------------------------------------------------------------------------
-# 领域错误码 (Domain Error Codes)
-# ---------------------------------------------------------------------------
 
-ERR_DAEMON_OFFLINE = "ERR_DAEMON_OFFLINE"
 ERR_IPC_PROTOCOL_MISMATCH = "ERR_IPC_PROTOCOL_MISMATCH"
-ERR_INTERNAL = "ERR_INTERNAL"
+ERR_CONFIG_INVALID = "ERR_CONFIG_INVALID"
 
 
-# ---------------------------------------------------------------------------
-# Wire 模型 (Wire Models) - 对应 JSON-RPC 报文结构
-# ---------------------------------------------------------------------------
+IpcWireRequest = RequestFrame
+IpcWireResponse = ResponseFrame
+IpcWirePush = PushFrame
+IpcWireError = ErrorObject
 
-@dataclass(frozen=True)
-class IpcWireRequest:
-    """IPC 请求包."""
-    method: str
-    params: dict[str, Any]
-    id: str
-    type: str = "request"
-
-
-@dataclass(frozen=True)
-class IpcWireResponse:
-    """IPC 响应包."""
-    id: str
-    result: Any = None
-    error: str | None = None
-    type: str = "response"
-
-
-@dataclass(frozen=True)
-class IpcWirePush:
-    """IPC 推送包."""
-    event: str
-    data: dict[str, Any]
-    type: str = "push"
-
-
-# ---------------------------------------------------------------------------
-# IpcClientProtocol (边界隔离契约)
-# ---------------------------------------------------------------------------
 
 class IpcClientProtocol(Protocol):
-    """IPC 插件对外暴露的唯一契约.
-    
-    业务插件应依赖此 Protocol 而非 IpcClientPlugin 具体的实现。
-    """
+    """IPC plugin public boundary."""
 
     async def request(self, method: str, **params: Any) -> dict[str, Any]:
-        """发起 IPC 请求并等待响应.
-        
-        返回值字典格式规范:
-        {
-            "ok": bool,
-            "result": Any | None,
-            "error_code": str | None,
-            "message": str | None
-        }
-        """
         ...
+
+
+__all__ = [
+    "ERR_CONFIG_INVALID",
+    "ERR_DAEMON_OFFLINE",
+    "ERR_INTERNAL",
+    "ERR_IPC_PROTOCOL_MISMATCH",
+    "EVENT_SESSION_KEEPALIVE",
+    "HelloLimits",
+    "HelloResult",
+    "IpcClientProtocol",
+    "IpcWireError",
+    "IpcWirePush",
+    "IpcWireRequest",
+    "IpcWireResponse",
+    "METHOD_SESSION_BYE",
+    "METHOD_SESSION_HELLO",
+    "METHOD_SESSION_PING",
+    "PROTOCOL_VERSION",
+    "ROLE_PUSH",
+    "ROLE_RPC",
+    "TRANSPORT_TCP",
+    "TRANSPORT_UNIX",
+    "make_hello_params",
+    "parse_hello_result",
+]
