@@ -5,161 +5,50 @@ license: MIT
 compatibility: Works with any OpenSpec change.
 metadata:
   author: project
-  version: "1.0"
+  version: "1.2"
 ---
 
-# OpenSpec Artifact Verify
+# OpenSpec Artifact Verify (Thin Entrypoint)
 
-Verify change artifacts before implementation begins.
+This skill is an entry point for artifact verification orchestration. It does not redefine runner flow.
 
-## Input
+Shared sequence reference:
+- `openspec/schemas/ai-enforced-workflow/verification-sequence.md#verify-sequence/default`
+- Verifier invocation template: `verify-reviewer-inline-v1`
 
-Optionally specify:
-- a change name
-- an artifact scope: `proposal`, `specs`, `design`, `tasks`, or `all`
+## Entrypoint Contract
 
-If omitted, use the active change from context when it is unambiguous.
+- `mode`: `artifact`
+- `evidence`: proposal/specs/design/tasks paths selected for review
+- `report path`: authoritative verifier-subagent findings JSON path, verifier execution evidence JSON path, and Gemini raw/report paths (when Gemini is enabled)
+- `routing target`: `openspec-repair-change` for blocked findings
+- `success continuation`: `openspec-apply-change` unless caller explicitly requests `verify-only`, `dry-run`, or `manual_pause`
+- `runtime profile`: from `.codex/agents/verify-reviewer.toml`
 
 ## Steps
 
-### 1. Load the change
-
-Run:
-- `openspec status --change "<name>" --json`
-- `openspec instructions apply --change "<name>" --json`
-
-Read the available artifact files from the change.
-
-### 2. Determine verification strictness
-
-Use the proposal risk tier if available:
-- `LIGHT`
-- `STANDARD`
-- `STRICT`
-
-If no tier exists, infer conservatively from the change scope and note the inference.
-
-Independent artifact verification rule:
-- `LIGHT`: optional
-- `STANDARD`: optional unless explicitly required by change artifacts
-- `STRICT`: mandatory independent artifact verification through this skill before implementation
-
-### 3. Verify three dimensions
-
-For the selected artifact scope, evaluate:
-
-- **Completeness**
-  Are required sections, capabilities, requirements, decisions, tasks, and review hooks present?
-
-- **Correctness**
-  Do artifacts match the user intent, declared capabilities, and explicit design or workflow rules?
-
-- **Coherence**
-  Do proposal, specs, design, and tasks agree with each other, or do they drift?
-
-### 4. Audit anti-abstraction guardrails
-
-Check whether important architectural claims are grounded by:
-- stack equivalents
-- named deliverables
-- failure semantics
-- boundary examples
-- contrast structures
-- verification hooks
-
-For `STRICT` changes, missing critical guardrails are blocking.
-
-### 5. Emit structured findings
-
-Each finding MUST include:
-- `id`
-- `severity`: `CRITICAL`, `WARNING`, or `SUGGESTION`
-- `dimension`: `Completeness`, `Correctness`, or `Coherence`
-- `artifact`: `proposal`, `specs`, `design`, or `tasks`
-- `problem`
-- `evidence`
-- `recommendation`
-- `redirect_layer`
-- `blocking`
-- `verifier_provenance`:
-  - `source` (for example `gemini-cli`)
-  - `execution_method` (for example `skill-mediated-cli`)
-  - `invocation_mode` (for example `headless-prompt`)
-  - `output_format` (for example `json`)
-  - `report_path`
-
-Use `redirect_layer` from:
-- `proposal`
-- `specs`
-- `design`
-- `tasks`
-
-### 6. Produce final assessment
-
-Return:
-- a scorecard by dimension
-- grouped findings by severity
-- a final assessment:
-  - `pass`
-  - `pass_with_warnings`
-  - `blocked`
-
-Guidance:
-- any `CRITICAL` finding blocks apply
-- `WARNING` findings do not block unless they are declared blocking for a `STRICT` change
-- `SUGGESTION` findings never block
-
-### 7. Hand off to repair
-
-If blocked or materially degraded, recommend `openspec-repair-change` and preserve findings in a format that repair can consume directly.
-
-### 8. Independent verifier execution contract (Gemini default)
-
-When independent artifact verification is required, this skill is the mandatory entry point for invoking or consuming the independent verifier output. Do not accept standalone Gemini reports that bypass this skill's normalization and routing.
-
-Default command contract (path-based inputs, no stdin-heavy prompts):
-
-```bash
-gemini -y --output-format json -p "Review STRICT change artifacts for <change-name>. Use files: proposal=<path>, specs=<glob>, design=<path>, tasks=<path>. Return structured findings with severity, dimension, evidence, and recommendations."
-```
-
-Optional approval-mode variant:
-
-```bash
-gemini --approval-mode yolo --output-format json -p "Review artifacts listed under <change-dir> and emit blocking findings only."
-```
-
-Example normalized report fragment:
-
-```json
-{
-  "assessment": "blocked",
-  "findings": [
-    {
-      "id": "AV-001",
-      "severity": "CRITICAL",
-      "dimension": "Correctness",
-      "artifact": "design",
-      "problem": "Design omits fallback path required by STRICT verifier gate.",
-      "evidence": "design.md lacks fallback behavior in Independent Verification Plan.",
-      "recommendation": "Add fallback behavior and responsible skill handoff.",
-      "redirect_layer": "design",
-      "blocking": true,
-      "verifier_provenance": {
-        "source": "gemini-cli",
-        "execution_method": "skill-mediated-cli",
-        "invocation_mode": "headless-prompt",
-        "output_format": "json",
-        "report_path": "reports/gemini/artifact-verify.json"
-      }
-    }
-  ]
-}
-```
+1. Resolve change (`openspec status --change "<name>" --json`).
+2. Load artifact evidence from `openspec instructions apply --change "<name>" --json`.
+3. Build minimal verification bundle:
+- `change`
+- `mode=artifact`
+- `risk_tier`
+- `evidence_paths_or_diff_scope`
+- `findings_contract=shared-findings-v1`
+- `retry_policy`
+4. Execute shared sequence `verify-sequence/default` using a fresh verifier instance (no inherited verifier memory).
+5. Require authoritative verifier-subagent findings JSON and execution evidence JSON with invocation metadata before treating the artifact gate as complete.
+6. If the result is blocked, route to `openspec-repair-change`.
+7. If the result is `pass` or policy-acceptable `pass_with_warnings`, automatically hand off to `openspec-apply-change` for the same change unless the caller explicitly requested `verify-only`, `dry-run`, or `manual_pause`.
+8. If repair reruns are needed, keep artifact rerun and apply handoff in the same automatic chain; do not require the user to manually restart `/opsx:apply` after a passing artifact rerun.
+9. Return outcome, routing decision, continuation target, and authoritative output paths.
 
 ## Guardrails
 
-- NEVER treat presence of sections as proof of quality
-- NEVER emit a blocking finding without concrete evidence
-- ALWAYS name the artifact layer that must be corrected
-- NEVER treat ad hoc Gemini output as valid independent verification unless produced or consumed through this skill
+- Keep this skill thin; orchestration behavior belongs to shared sequence.
+- Enforce fresh verifier instance on each rerun; do not reuse prior verifier memory.
+- Do not inline platform-specific command bodies in task policy text.
+- Record resolved runner command only in execution evidence/logs.
+- Do not stop on a passing artifact gate just to ask the user to run apply manually unless the caller explicitly requested `verify-only`, `dry-run`, or `manual_pause`.
+- Do not treat manually authored markdown summaries as authoritative verifier evidence.
+- Do not perform implementation auto-fix from `mode=artifact`; a passing artifact gate hands off to apply, and blocking findings route to repair.

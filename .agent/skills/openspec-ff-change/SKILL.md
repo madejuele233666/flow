@@ -89,6 +89,7 @@ After completing all artifacts, summarize:
 - The schema defines what each artifact should contain - follow it
 - Read dependency artifacts for context before creating new ones
 - Use `template` as the structure for your output file - fill in its sections
+- If the selected schema is `ai-enforced-workflow`, ensure design/tasks preserve shared sequence `verify-sequence/default` for any project domain: read-only verifier-subagent (`verify-reviewer`) review first, invoke via built-in subagent API template `verify-reviewer-inline-v1`, fresh verifier per rerun (no inherited verifier memory), authoritative verifier findings JSON plus execution evidence JSON for each gate, verifier runtime profile from `.codex/agents/verify-reviewer.toml`, and Gemini second opinion mandatory only for `STRICT` or explicitly dual-gated checkpoints
 - **IMPORTANT**: `context` and `rules` are constraints for YOU, not content for the file
   - Do NOT copy `<context>`, `<rules>`, `<project_context>` blocks into the artifact
   - These guide what you write, but should never appear in the output
