@@ -32,6 +32,7 @@ Verify that an implementation matches the change artifacts (specs, tasks, design
    Parse the JSON to understand:
    - `schemaName`: The workflow being used (e.g., "spec-driven")
    - Which artifacts exist for this change
+   - Risk tier from proposal (`LIGHT` / `STANDARD` / `STRICT`) when available
 
 3. **Get the change directory and load artifacts**
 
@@ -49,6 +50,13 @@ Verify that an implementation matches the change artifacts (specs, tasks, design
    - **Coherence**: Track design adherence and pattern consistency
 
    Each dimension can have CRITICAL, WARNING, or SUGGESTION issues.
+
+   Add verifier provenance support fields for findings produced via independent verification:
+   - `verifier_provenance.source`
+   - `verifier_provenance.execution_method`
+   - `verifier_provenance.invocation_mode`
+   - `verifier_provenance.output_format`
+   - `verifier_provenance.report_path`
 
 5. **Verify Completeness**
 
@@ -138,10 +146,72 @@ Verify that an implementation matches the change artifacts (specs, tasks, design
       - Minor improvements
       - Each with specific recommendation
 
-   **Final Assessment**:
-   - If CRITICAL issues: "X critical issue(s) found. Fix before archiving."
-   - If only warnings: "No critical issues. Y warning(s) to consider. Ready for archive (with noted improvements)."
-   - If all clear: "All checks passed. Ready for archive."
+   **Interim Assessment (before independent gate)**:
+   - If CRITICAL issues: "X critical issue(s) found. Fix before independent verify and archive."
+   - If only warnings: "No critical issues in baseline checks. Continue to independent verify gate."
+   - If all clear: "Baseline checks passed. Continue to independent verify gate."
+
+9. **Run required independent implementation verification gate**
+
+   For governed risk tiers:
+   - `LIGHT`: independent implementation verification is optional
+   - `STANDARD`: independent implementation verification is mandatory before sync/archive
+   - `STRICT`: independent implementation verification is mandatory before sync/archive
+
+   This skill is the mandatory entry point for implementation-side independent verification. Do not accept standalone Gemini reports that bypass this skill.
+
+   Default Gemini CLI command contract:
+
+   ```bash
+   gemini -y --output-format json -p "Review implementation for change <name> using specs under <change-dir>/specs, tasks at <change-dir>/tasks.md, and relevant code paths. Return structured findings with severity, dimension, artifact, problem, evidence, recommendation, redirect_layer, blocking, and verifier_provenance."
+   ```
+
+   Optional approval-mode variant:
+
+   ```bash
+   gemini --approval-mode yolo --output-format json -p "Verify implementation for <name> against change artifacts in <change-dir>. Output JSON findings only."
+   ```
+
+   Path-based prompt guidance:
+   - Prefer explicit file and directory paths in prompts
+   - Avoid piping large artifact bodies via stdin
+   - Read the planned report path from change artifacts (`tasks.md` or `design.md`) and persist output there for repair-loop reuse
+
+   Example report snippet to preserve:
+
+   ```json
+   {
+     "change": "example-change",
+     "assessment": "pass_with_warnings",
+     "findings": [
+       {
+         "id": "IV-014",
+         "severity": "WARNING",
+         "dimension": "Correctness",
+         "artifact": "implementation",
+         "problem": "Scenario edge path appears untested.",
+         "evidence": "No test found for scenario 'retry after verifier timeout'.",
+         "recommendation": "Add scenario test and rerun verify.",
+         "redirect_layer": "implementation",
+         "blocking": false,
+         "verifier_provenance": {
+           "source": "gemini-cli",
+           "execution_method": "skill-mediated-cli",
+           "invocation_mode": "headless-prompt",
+           "output_format": "json",
+           "report_path": "reports/gemini/implementation-verify.json"
+         }
+       }
+     ]
+   }
+   ```
+
+10. **Generate final assessment after independent gate**
+
+   Merge baseline checks and independent verifier results into final status:
+   - If any blocking finding exists in either stage: "Blocked. Repair required before archive."
+   - If no blocking findings but warnings exist: "Pass with warnings. Archive allowed with noted follow-ups."
+   - If all checks clear: "Pass. Ready for archive."
 
 **Verification Heuristics**
 
@@ -166,3 +236,4 @@ Use clear markdown with:
 - Code references in format: `file.ts:123`
 - Specific, actionable recommendations
 - No vague suggestions like "consider reviewing"
+- For independent verification findings, include `verifier_provenance` fields
