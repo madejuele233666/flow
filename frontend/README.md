@@ -18,6 +18,7 @@ pip install -e ".[dev,gui]"
 
 ```bash
 cd frontend
+export FLOW_DAEMON_SOCKET="/absolute/path/to/daemon.sock"
 python -m flow_hud.main
 ```
 

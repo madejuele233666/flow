@@ -11,7 +11,9 @@ safe_mode = false
 [extensions]
 # 插件专属配置
 [extensions.ipc-client]
-socket_path = "~/.flow_engine/daemon.sock"
+# Path to backend daemon socket.
+# You can also set env FLOW_DAEMON_SOCKET instead of hardcoding here.
+socket_path = "/absolute/path/to/daemon.sock"
 
 [worker]
 max_retries = 2

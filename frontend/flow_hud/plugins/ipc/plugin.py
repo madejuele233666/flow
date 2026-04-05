@@ -27,6 +27,8 @@ from flow_hud.plugins.manifest import HudPluginManifest
 
 logger = logging.getLogger(__name__)
 
+_DAEMON_SOCKET_ENV = "FLOW_DAEMON_SOCKET"
+
 
 class IpcClientPlugin(HudPlugin, IpcClientProtocol):
     """IPC 客户端插件.
@@ -58,11 +60,17 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
 
         self._ctx = ctx
         
-        # 获取配置
+        # 获取配置（优先显式配置，其次环境变量）
         cfg = ctx.get_extension_config("ipc-client")
-        self._socket_path = os.path.expanduser(
-            cfg.get("socket_path", "~/.flow_engine/daemon.sock")
-        )
+        socket_path = cfg.get("socket_path") or os.environ.get(_DAEMON_SOCKET_ENV)
+        if not socket_path:
+            logger.error(
+                "IPC socket path is not configured. Set extensions.ipc-client.socket_path "
+                "or env %s.",
+                _DAEMON_SOCKET_ENV,
+            )
+            return
+        self._socket_path = os.path.expanduser(socket_path)
 
         # 启动后台线程
         self._thread = threading.Thread(
@@ -94,6 +102,16 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
         
         采用瞬时连接，避免干扰长连接监听。
         """
+        if not self._socket_path:
+            return {
+                "ok": False,
+                "result": None,
+                "error_code": ERR_DAEMON_OFFLINE,
+                "message": (
+                    "Socket path not configured. Set extensions.ipc-client.socket_path "
+                    f"or env {_DAEMON_SOCKET_ENV}."
+                ),
+            }
         try:
             reader, writer = await asyncio.open_unix_connection(self._socket_path)
         except OSError as exc:
@@ -194,6 +212,9 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
 
     async def _listen_loop(self) -> None:
         """主监听循环（带 Exponential Backoff）."""
+        if not self._socket_path:
+            return
+
         backoff = 0.5
         max_backoff = 10.0
 
