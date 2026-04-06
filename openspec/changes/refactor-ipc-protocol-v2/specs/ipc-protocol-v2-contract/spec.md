@@ -39,10 +39,15 @@ Each V2 connection MUST start with `session.hello` as the first logical request,
 #### Scenario: Hello response uses canonical field set
 - **WHEN** the server accepts `session.hello`
 - **THEN** `result` includes required fields `session_id`, `protocol_version`, `server{name,version}`, `role`, `transport`, `capabilities`, and `limits`
+- **AND** returned `capabilities` are scoped to the negotiated `role` for that session
 
 #### Scenario: Non-hello first request is rejected
 - **WHEN** a client sends any non-`session.hello` request before handshake success
 - **THEN** the server rejects with `ERR_INVALID_FRAME` (or closes the connection)
+
+#### Scenario: Pre-handshake oversized frame is rejected
+- **WHEN** an incoming frame exceeds the receiver local pre-handshake safety size before hello success
+- **THEN** the receiver treats it as `ERR_INVALID_FRAME` and may close the connection
 
 #### Scenario: Unsupported protocol range is rejected
 - **WHEN** `protocol_min`/`protocol_max` cannot negotiate to supported V2 range
@@ -83,6 +88,7 @@ The protocol MUST reserve `session.ping` and `session.bye` semantics, and MUST d
 #### Scenario: Duplex role is rejected in V2
 - **WHEN** hello negotiation requests `duplex` role in V2 implementation
 - **THEN** server returns `ERR_ROLE_MISMATCH`
+- **AND** no successful `duplex` direction semantics are implied in V2
 
 ### Requirement: Error payload schema and reserved code registry SHALL be stable
 All protocol and method failures MUST return `error` object fields `code`, `message`, `retryable`, and optional `data`. V2 reserved codes MUST include:
@@ -97,6 +103,11 @@ All protocol and method failures MUST return `error` object fields `code`, `mess
 - **WHEN** a frame is unparseable or parseable but missing required V2 fields
 - **THEN** the receiver returns or logs `ERR_INVALID_FRAME` and may close the connection
 
+#### Scenario: Capability-gated behavior is rejected when not negotiated
+- **WHEN** a method or extension event requires a capability not accepted in hello response
+- **THEN** error code `ERR_CAPABILITY_REQUIRED` is used
+- **AND** `error.data.required_capability` identifies the missing capability
+
 ### Requirement: Negotiated `limits` schema SHALL be concrete
 `session.hello` success response MUST include `result.limits` with required keys:
 - `max_frame_bytes` (unit: bytes, chosen by server config)
@@ -104,6 +115,7 @@ All protocol and method failures MUST return `error` object fields `code`, `mess
 - `heartbeat_interval_ms` (unit: milliseconds, chosen by server config)
 - `heartbeat_miss_threshold` (unit: count, chosen by server config)
 These values are communicated in hello response and MUST be applied by peers according to key semantics.
+Pre-handshake enforcement MAY use an implementation-local safety size and does not depend on negotiated values.
 
 #### Scenario: Server advertises concrete limits
 - **WHEN** hello negotiation succeeds

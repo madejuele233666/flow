@@ -230,7 +230,7 @@ class FlowDaemon:
                 "title": t.title,
                 "state": t.state.value,
                 "priority": t.priority,
-                "ddl": t.ddl.strftime("%m-%d") if t.ddl else None,
+                "ddl": t.ddl.strftime("%Y-%m-%d") if t.ddl else None,
                 "score": round(score, 2) if score is not None else None,
             })
         return result
@@ -304,9 +304,12 @@ class FlowDaemon:
     async def _handle_task_done(self, params: dict[str, Any]) -> dict[str, Any]:
         """完成当前活跃任务（自动检测）."""
         tasks = await self._app.repo.load_all()
-        active = next((t for t in tasks if t.state == TaskState.IN_PROGRESS), None)
-        if not active:
+        active_tasks = [t for t in tasks if t.state == TaskState.IN_PROGRESS]
+        if not active_tasks:
             raise ValueError("当前没有进行中的任务")
+        if len(active_tasks) > 1:
+            raise ValueError("存在多个进行中的任务，无法确定当前活跃任务")
+        active = active_tasks[0]
 
         await self._app.engine.transition(active, TaskState.DONE)
         await self._app.repo.save_all(tasks)
@@ -316,9 +319,12 @@ class FlowDaemon:
     async def _handle_task_pause(self, params: dict[str, Any]) -> dict[str, Any]:
         """暂停当前活跃任务（自动检测）."""
         tasks = await self._app.repo.load_all()
-        active = next((t for t in tasks if t.state == TaskState.IN_PROGRESS), None)
-        if not active:
+        active_tasks = [t for t in tasks if t.state == TaskState.IN_PROGRESS]
+        if not active_tasks:
             raise ValueError("当前没有进行中的任务")
+        if len(active_tasks) > 1:
+            raise ValueError("存在多个进行中的任务，无法确定当前活跃任务")
+        active = active_tasks[0]
 
         await self._app.engine.transition(active, TaskState.PAUSED)
         await self._app.repo.save_all(tasks)

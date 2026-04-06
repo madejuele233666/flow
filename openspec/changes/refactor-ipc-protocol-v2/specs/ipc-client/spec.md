@@ -18,10 +18,17 @@ The plugin MUST receive daemon pushes only from a negotiated `push` role channel
 #### Scenario: Push received and adapted
 - **WHEN** daemon sends a V2 push frame after successful hello
 - **THEN** the plugin decodes it with shared codec, adapts domain payload, and emits `HudEventType.IPC_MESSAGE_RECEIVED` in background
+- **AND** capability-gated extension events are only consumed when that capability appears in hello response `capabilities`
 
 #### Scenario: Push channel reconnects
 - **WHEN** the push channel disconnects unexpectedly
 - **THEN** the plugin reconnects with backoff and repeats hello negotiation before resuming push dispatch
+
+#### Scenario: Hello failure retry policy
+- **WHEN** hello response contains structured error with `retryable = true`
+- **THEN** plugin enters reconnect/backoff loop
+- **AND WHEN** hello response contains `retryable = false`
+- **THEN** plugin does not auto-retry indefinitely without external policy override
 
 ### Requirement: Send Request messages
 The plugin MUST send business requests through a negotiated `rpc` role channel and map daemon structured errors into the plugin contract (`ok`, `result`, `error_code`, `message`) without leaking backend runtime internals.

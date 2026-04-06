@@ -150,6 +150,20 @@ class HudPluginContext:
             "socket_path": self._config.connection_socket_path,
         }
 
+    def get_ipc_client_config(self) -> dict[str, Any]:
+        """获取 IPC 客户端运行时调优配置（来自 [ipc_client]）。"""
+        return {
+            "thread_join_timeout_s": self._config.ipc_thread_join_timeout_s,
+            "retry_initial_backoff_s": self._config.ipc_retry_initial_backoff_s,
+            "retry_max_backoff_s": self._config.ipc_retry_max_backoff_s,
+            "retry_backoff_multiplier": self._config.ipc_retry_backoff_multiplier,
+            "retry_backoff_jitter_ratio": self._config.ipc_retry_backoff_jitter_ratio,
+            "retry_error_sleep_s": self._config.ipc_retry_error_sleep_s,
+            "stop_poll_interval_s": self._config.ipc_stop_poll_interval_s,
+            "rpc_capabilities": list(self._config.ipc_rpc_capabilities),
+            "push_capabilities": list(self._config.ipc_push_capabilities),
+        }
+
     # ── 只读配置 ──
 
     @property

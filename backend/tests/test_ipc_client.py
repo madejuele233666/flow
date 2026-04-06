@@ -32,8 +32,8 @@ async def _start_bad_hello_server(socket_path: Path, *, protocol_version: int) -
                 role=ROLE_RPC,
                 transport=TRANSPORT_UNIX,
                 max_frame_bytes=65536,
-                request_timeout_ms=30000,
-                heartbeat_interval_ms=15000,
+                request_timeout_ms=10000,
+                heartbeat_interval_ms=3000,
                 heartbeat_miss_threshold=2,
                 capabilities=[],
             )

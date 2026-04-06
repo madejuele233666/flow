@@ -10,6 +10,12 @@ from typing import Any
 
 from flow_hud.adapters.ipc_messages import adapt_ipc_message
 from flow_hud.core.events import HudEventType
+from flow_hud.ipc_settings import (
+    DEFAULT_CONNECTION_HOST,
+    DEFAULT_CONNECTION_PORT,
+    IpcClientTuning,
+    parse_ipc_client_tuning,
+)
 from flow_hud.plugins.base import HudPlugin
 from flow_hud.plugins.context import HudAdminContext
 from flow_hud.plugins.ipc import codec
@@ -51,6 +57,15 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
             "host": str,
             "port": int,
             "socket_path": str,
+            "thread_join_timeout_s": float,
+            "retry_initial_backoff_s": float,
+            "retry_max_backoff_s": float,
+            "retry_backoff_multiplier": float,
+            "retry_backoff_jitter_ratio": float,
+            "retry_error_sleep_s": float,
+            "stop_poll_interval_s": float,
+            "rpc_capabilities": list,
+            "push_capabilities": list,
         },
     )
 
@@ -65,12 +80,14 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
         self._limits: HelloLimits | None = None
         self._push_capabilities: set[str] = set()
         self._runtime_endpoint_override: dict[str, Any] = {}
+        self._tuning = IpcClientTuning()
 
     def setup(self, ctx: HudAdminContext) -> None:
         if not isinstance(ctx, HudAdminContext):
             logger.error("IPC Client Plugin requires HudAdminContext")
             return
         self._ctx = ctx
+        self._tuning = self._resolve_tuning(ctx)
         self._endpoint = self._resolve_endpoint(ctx)
         if self._endpoint is None:
             return
@@ -90,7 +107,7 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
         if self._loop and self._loop.is_running() and self._main_task and not self._main_task.done():
             self._loop.call_soon_threadsafe(self._main_task.cancel)
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=5.0)
+            self._thread.join(timeout=self._tuning.thread_join_timeout_s)
         logger.info("IPC Client Plugin stopped")
 
     def set_runtime_endpoint_override(self, **overrides: Any) -> None:
@@ -113,7 +130,7 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
                 writer,
                 role=ROLE_RPC,
                 transport=endpoint.transport,
-                capabilities=[],
+                capabilities=list(self._tuning.rpc_capabilities),
             )
             self._limits = hello.limits
             limits = hello.limits
@@ -183,8 +200,8 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
         if endpoint is None:
             return
 
-        backoff = 0.5
-        max_backoff = 10.0
+        backoff = self._tuning.retry_initial_backoff_s
+        max_backoff = self._tuning.retry_max_backoff_s
 
         while not self._stop_event.is_set():
             try:
@@ -194,13 +211,13 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
                     writer,
                     role=ROLE_PUSH,
                     transport=endpoint.transport,
-                    capabilities=["push.timer"],
+                    capabilities=list(self._tuning.push_capabilities),
                 )
                 self._limits = hello.limits
                 self._push_capabilities = set(hello.capabilities)
                 limits = hello.limits
                 missed_heartbeats = 0
-                backoff = 0.5
+                backoff = self._tuning.retry_initial_backoff_s
 
                 try:
                     while not self._stop_event.is_set():
@@ -237,17 +254,25 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
                     break
                 logger.warning("IPC protocol mismatch: %s", exc)
                 await self._sleep_with_backoff(backoff)
-                backoff = min(backoff * 1.5 + random.uniform(0.0, 0.1 * backoff), max_backoff)
+                backoff = min(
+                    backoff * self._tuning.retry_backoff_multiplier
+                    + random.uniform(0.0, self._tuning.retry_backoff_jitter_ratio * backoff),
+                    max_backoff,
+                )
             except OSError:
                 if not self._stop_event.is_set():
                     logger.warning("Daemon offline, retrying in %.1fs...", backoff)
                     await self._sleep_with_backoff(backoff)
-                    backoff = min(backoff * 1.5 + random.uniform(0.0, 0.1 * backoff), max_backoff)
+                    backoff = min(
+                        backoff * self._tuning.retry_backoff_multiplier
+                        + random.uniform(0.0, self._tuning.retry_backoff_jitter_ratio * backoff),
+                        max_backoff,
+                    )
             except Exception:
                 if self._stop_event.is_set():
                     break
                 logger.exception("Error in listen loop, retrying...")
-                await asyncio.sleep(1)
+                await asyncio.sleep(self._tuning.retry_error_sleep_s)
 
     async def _sleep_with_backoff(self, backoff: float) -> None:
         try:
@@ -257,11 +282,15 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
 
     async def _wait_for_stop_async(self) -> None:
         while not self._stop_event.is_set():
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(self._tuning.stop_poll_interval_s)
 
     def _resolve_endpoint(self, ctx: HudAdminContext) -> IpcEndpoint | None:
         cfg = ctx.get_extension_config("ipc-client")
+        if not isinstance(cfg, dict):
+            cfg = {}
         defaults = ctx.get_connection_config()
+        if not isinstance(defaults, dict):
+            defaults = {}
         runtime = self._runtime_endpoint_override
 
         transport = str(
@@ -277,14 +306,14 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
             or os.environ.get(_DAEMON_HOST_ENV)
             or cfg.get("host")
             or defaults.get("host")
-            or "127.0.0.1"
+            or DEFAULT_CONNECTION_HOST
         )
         port_raw = (
             runtime.get("port")
             or os.environ.get(_DAEMON_PORT_ENV)
             or cfg.get("port")
             or defaults.get("port")
-            or 54321
+            or DEFAULT_CONNECTION_PORT
         )
         socket_path = str(
             runtime.get("socket_path")
@@ -311,6 +340,16 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
 
         logger.error("Unsupported IPC transport: %s", transport)
         return None
+
+    def _resolve_tuning(self, ctx: HudAdminContext) -> IpcClientTuning:
+        plugin_cfg = ctx.get_extension_config("ipc-client")
+        defaults_getter = getattr(ctx, "get_ipc_client_config", None)
+        defaults = defaults_getter() if callable(defaults_getter) else {}
+        if not isinstance(plugin_cfg, dict):
+            plugin_cfg = {}
+        if not isinstance(defaults, dict):
+            defaults = {}
+        return parse_ipc_client_tuning(defaults=defaults, overrides=plugin_cfg)
 
     def _error(self, code: str, message: str) -> dict[str, Any]:
         return {"ok": False, "result": None, "error_code": code, "message": message}

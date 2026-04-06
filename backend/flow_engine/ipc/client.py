@@ -25,7 +25,7 @@ from flow_engine.ipc.protocol import (
     make_request,
     parse_hello_result,
 )
-from flow_engine.ipc.server import DEFAULT_SOCKET_PATH
+from flow_engine.ipc.defaults import IPC_DEFAULT_REQUEST_TIMEOUT_MS, IPC_DEFAULT_SOCKET_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class IPCClient:
     """Client connector for daemon IPC."""
 
     def __init__(self, socket_path: Path | None = None) -> None:
-        self._socket_path = socket_path or DEFAULT_SOCKET_PATH
+        self._socket_path = socket_path or IPC_DEFAULT_SOCKET_PATH
         self._rpc_reader: asyncio.StreamReader | None = None
         self._rpc_writer: asyncio.StreamWriter | None = None
         self._push_reader: asyncio.StreamReader | None = None
@@ -70,7 +70,7 @@ class IPCClient:
         if not self._rpc_writer or not self._rpc_reader:
             raise ConnectionError("not connected to daemon")
 
-        timeout_ms = self._limits.request_timeout_ms if self._limits else 30000
+        timeout_ms = self._limits.request_timeout_ms if self._limits else IPC_DEFAULT_REQUEST_TIMEOUT_MS
         request = make_request(method, params)
         self._rpc_writer.write(encode(request))
         await self._rpc_writer.drain()

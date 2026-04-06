@@ -47,8 +47,8 @@ def test_parse_hello_result_rejects_bool_numeric_fields() -> None:
                 "capabilities": [],
                 "limits": {
                     "max_frame_bytes": 65536,
-                    "request_timeout_ms": 30000,
-                    "heartbeat_interval_ms": 15000,
+                    "request_timeout_ms": 10000,
+                    "heartbeat_interval_ms": 3000,
                     "heartbeat_miss_threshold": 2,
                 },
             }
@@ -66,8 +66,8 @@ def test_parse_hello_result_requires_capabilities_field() -> None:
                 "transport": "unix",
                 "limits": {
                     "max_frame_bytes": 65536,
-                    "request_timeout_ms": 30000,
-                    "heartbeat_interval_ms": 15000,
+                    "request_timeout_ms": 10000,
+                    "heartbeat_interval_ms": 3000,
                     "heartbeat_miss_threshold": 2,
                 },
             }
@@ -84,8 +84,8 @@ def test_parse_hello_result_requires_capabilities_field() -> None:
                 "capabilities": [],
                 "limits": {
                     "max_frame_bytes": False,
-                    "request_timeout_ms": 30000,
-                    "heartbeat_interval_ms": 15000,
+                    "request_timeout_ms": 10000,
+                    "heartbeat_interval_ms": 3000,
                     "heartbeat_miss_threshold": 2,
                 },
             }

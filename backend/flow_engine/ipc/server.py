@@ -40,10 +40,19 @@ from flow_engine.ipc.protocol import (
     make_response,
     parse_hello_params,
 )
+from flow_engine.ipc.defaults import (
+    IPC_DEFAULT_SOCKET_PATH,
+    IPC_DEFAULT_HEARTBEAT_INTERVAL_MS,
+    IPC_DEFAULT_HEARTBEAT_MISS_THRESHOLD,
+    IPC_DEFAULT_MAX_FRAME_BYTES,
+    IPC_DEFAULT_REQUEST_TIMEOUT_MS,
+    IPC_DEFAULT_TCP_HOST,
+    IPC_DEFAULT_TCP_PORT,
+)
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SOCKET_PATH = Path.home() / ".flow_engine" / "daemon.sock"
+DEFAULT_SOCKET_PATH = IPC_DEFAULT_SOCKET_PATH
 
 MethodHandler = Callable[[dict[str, Any]], Coroutine[Any, Any, Any]]
 
@@ -71,8 +80,12 @@ class _ConnectionState:
 class IPCServer:
     """Daemon-side IPC server."""
 
-    DEFAULT_TCP_HOST = "127.0.0.1"
-    DEFAULT_TCP_PORT = 54321
+    DEFAULT_TCP_HOST = IPC_DEFAULT_TCP_HOST
+    DEFAULT_TCP_PORT = IPC_DEFAULT_TCP_PORT
+    DEFAULT_MAX_FRAME_BYTES = IPC_DEFAULT_MAX_FRAME_BYTES
+    DEFAULT_REQUEST_TIMEOUT_MS = IPC_DEFAULT_REQUEST_TIMEOUT_MS
+    DEFAULT_HEARTBEAT_INTERVAL_MS = IPC_DEFAULT_HEARTBEAT_INTERVAL_MS
+    DEFAULT_HEARTBEAT_MISS_THRESHOLD = IPC_DEFAULT_HEARTBEAT_MISS_THRESHOLD
 
     def __init__(
         self,
@@ -80,10 +93,10 @@ class IPCServer:
         tcp_host: str = DEFAULT_TCP_HOST,
         tcp_port: int = DEFAULT_TCP_PORT,
         *,
-        max_frame_bytes: int = 65536,
-        request_timeout_ms: int = 30000,
-        heartbeat_interval_ms: int = 15000,
-        heartbeat_miss_threshold: int = 2,
+        max_frame_bytes: int = DEFAULT_MAX_FRAME_BYTES,
+        request_timeout_ms: int = DEFAULT_REQUEST_TIMEOUT_MS,
+        heartbeat_interval_ms: int = DEFAULT_HEARTBEAT_INTERVAL_MS,
+        heartbeat_miss_threshold: int = DEFAULT_HEARTBEAT_MISS_THRESHOLD,
     ) -> None:
         self._socket_path = socket_path or DEFAULT_SOCKET_PATH
         self._tcp_host = tcp_host

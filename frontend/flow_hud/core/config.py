@@ -18,6 +18,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from flow_hud.ipc_settings import (
+    DEFAULT_CONNECTION_HOST,
+    DEFAULT_CONNECTION_PORT,
+    DEFAULT_CONNECTION_TRANSPORT,
+    IpcClientTuning,
+)
+
 # toml 在 Python 3.11+ 有标准库 tomllib（只读）
 try:
     import tomllib  # Python 3.11+
@@ -49,6 +56,11 @@ class HudConfig:
         [worker]
         max_retries = 2
 
+        [ipc_client]
+        retry_initial_backoff_s = 0.2
+        retry_max_backoff_s = 2.0
+        push_capabilities = ["push.timer"]
+
         [extensions]
         [extensions.my-plugin]
         api_key = \"xxx\"
@@ -75,10 +87,21 @@ class HudConfig:
     extensions: dict[str, Any] = field(default_factory=dict)
 
     # ── IPC 连接默认值（可被插件显式配置/环境变量覆盖） ──
-    connection_transport: str = "tcp"
-    connection_host: str = "127.0.0.1"
-    connection_port: int = 54321
+    connection_transport: str = DEFAULT_CONNECTION_TRANSPORT
+    connection_host: str = DEFAULT_CONNECTION_HOST
+    connection_port: int = DEFAULT_CONNECTION_PORT
     connection_socket_path: str = ""
+
+    # ── IPC 客户端运行时调优（可被 extensions.ipc-client 覆盖） ──
+    ipc_thread_join_timeout_s: float = IpcClientTuning.thread_join_timeout_s
+    ipc_retry_initial_backoff_s: float = IpcClientTuning.retry_initial_backoff_s
+    ipc_retry_max_backoff_s: float = IpcClientTuning.retry_max_backoff_s
+    ipc_retry_backoff_multiplier: float = IpcClientTuning.retry_backoff_multiplier
+    ipc_retry_backoff_jitter_ratio: float = IpcClientTuning.retry_backoff_jitter_ratio
+    ipc_retry_error_sleep_s: float = IpcClientTuning.retry_error_sleep_s
+    ipc_stop_poll_interval_s: float = IpcClientTuning.stop_poll_interval_s
+    ipc_rpc_capabilities: list[str] = field(default_factory=lambda: list(IpcClientTuning.rpc_capabilities))
+    ipc_push_capabilities: list[str] = field(default_factory=lambda: list(IpcClientTuning.push_capabilities))
 
     @classmethod
     def load(cls, config_path: Path | None = None) -> HudConfig:
@@ -141,6 +164,27 @@ class HudConfig:
                 config.connection_port = int(conn["port"])
             if "socket_path" in conn:
                 config.connection_socket_path = str(conn["socket_path"])
+
+        if "ipc_client" in raw:
+            ipc_client = raw["ipc_client"]
+            if "thread_join_timeout_s" in ipc_client:
+                config.ipc_thread_join_timeout_s = float(ipc_client["thread_join_timeout_s"])
+            if "retry_initial_backoff_s" in ipc_client:
+                config.ipc_retry_initial_backoff_s = float(ipc_client["retry_initial_backoff_s"])
+            if "retry_max_backoff_s" in ipc_client:
+                config.ipc_retry_max_backoff_s = float(ipc_client["retry_max_backoff_s"])
+            if "retry_backoff_multiplier" in ipc_client:
+                config.ipc_retry_backoff_multiplier = float(ipc_client["retry_backoff_multiplier"])
+            if "retry_backoff_jitter_ratio" in ipc_client:
+                config.ipc_retry_backoff_jitter_ratio = float(ipc_client["retry_backoff_jitter_ratio"])
+            if "retry_error_sleep_s" in ipc_client:
+                config.ipc_retry_error_sleep_s = float(ipc_client["retry_error_sleep_s"])
+            if "stop_poll_interval_s" in ipc_client:
+                config.ipc_stop_poll_interval_s = float(ipc_client["stop_poll_interval_s"])
+            if "rpc_capabilities" in ipc_client:
+                config.ipc_rpc_capabilities = [x for x in ipc_client["rpc_capabilities"] if isinstance(x, str)]
+            if "push_capabilities" in ipc_client:
+                config.ipc_push_capabilities = [x for x in ipc_client["push_capabilities"] if isinstance(x, str)]
 
         if "extensions" in raw:
             config.extensions = raw["extensions"]

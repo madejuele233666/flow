@@ -109,6 +109,7 @@ Recommended config layers:
 
 - client-specific config, for example `[extensions.ipc-client]`
 - generic shared config, for example `[connection]`
+- client runtime tuning config, for example `[ipc_client]`
 
 ### 5.2 Resolution Rules
 
@@ -136,6 +137,8 @@ V2 implementations MUST support:
 
 V2 implementations MAY reserve `duplex`, but if unsupported they MUST reject it with `ERR_ROLE_MISMATCH`.
 
+If a future implementation negotiates `duplex` successfully, peers MUST NOT assume any implicit frame-direction rule beyond what that future version explicitly defines.
+
 Recommended client topology:
 
 - one long-lived `push` connection
@@ -160,6 +163,13 @@ Frame size rule:
 - frame size is measured in encoded UTF-8 bytes, including the trailing newline
 - the server advertises `max_frame_bytes` during handshake
 - after handshake, both peers MUST enforce that negotiated limit on incoming and outgoing frames
+
+Pre-handshake safety rule:
+
+- because hello itself carries negotiated limits, receivers MUST enforce a local pre-handshake frame safety limit
+- this local limit is implementation-defined and applies before `session.hello` success
+- if a pre-handshake frame exceeds that local limit, receiver SHOULD treat it as `ERR_INVALID_FRAME` and close
+- Flow Engine V2 profile uses the same numeric value for pre-handshake safety and negotiated `max_frame_bytes`
 
 Unknown-field rule:
 
@@ -339,6 +349,7 @@ Rules:
 - a client MUST NOT send `type: "push"` to the server
 - a server receiving a client-originated push frame MUST treat it as `ERR_INVALID_FRAME`
 - `meta.seq`, if present, MUST be monotonic per connection
+- after reconnect and new hello session, `meta.seq` MAY restart from a new initial value
 
 ## 13. Error Object
 
@@ -383,11 +394,23 @@ Semantics:
 
 - `ERR_INVALID_FRAME`: wire-level invalidity, malformed JSON, missing required frame fields, wrong first request, wrong direction, invalid handshake shape
 - `ERR_INVALID_PARAMS`: method-level parameter validation failure after a valid frame and valid method name have been established
+- `ERR_CAPABILITY_REQUIRED`: method or extension event requires a capability that was not accepted in hello response
 - `ERR_ROLE_MISMATCH`: wrong role usage or unsupported role/transport combination
 - `ERR_REQUEST_TIMEOUT`: handler exceeded negotiated request timeout
 - `ERR_DAEMON_OFFLINE`: local client-side synthesized connectivity failure; usually not sent by server
 - `ERR_DAEMON_SHUTTING_DOWN`: daemon accepted the connection but is refusing new RPC work during shutdown
 - `ERR_INTERNAL`: unexpected server failure
+
+Recommended `ERR_CAPABILITY_REQUIRED` payload shape in `error.data`:
+
+```json
+{
+  "required_capability": "push.timer",
+  "method": "timer.subscribe"
+}
+```
+
+For event streams, `method` MAY be replaced with `event`.
 
 ## 14. Handshake Overview
 
@@ -471,14 +494,12 @@ Schema:
     "transport": "tcp",
     "capabilities": [
       "push.task_state",
-      "push.timer",
-      "rpc.task",
-      "rpc.templates"
+      "push.timer"
     ],
     "limits": {
       "max_frame_bytes": 65536,
-      "request_timeout_ms": 30000,
-      "heartbeat_interval_ms": 15000,
+      "request_timeout_ms": 10000,
+      "heartbeat_interval_ms": 3000,
       "heartbeat_miss_threshold": 2
     }
   },
@@ -502,6 +523,7 @@ Capabilities negotiation semantics:
 
 - `capabilities` in hello request is the client-requested feature hint list
 - `capabilities` in hello response is the server-accepted feature list for this session
+- response `capabilities` MUST be role-scoped to the negotiated session role
 - a server MAY accept all requested capabilities (echo behavior)
 - a server MAY return a subset if policy or implementation constraints require filtering
 - a server MAY include role baseline capabilities even if they were not explicitly requested
@@ -589,6 +611,7 @@ Required behavior:
 
 - reject outgoing frames larger than this limit
 - reject incoming frames larger than this limit
+- this negotiated limit does not remove the requirement for a local pre-handshake safety limit
 
 ### 18.2 `request_timeout_ms`
 
@@ -652,6 +675,7 @@ If client sends a business request on a `push` session:
 
 - reserved in V2
 - if unsupported, reject at hello with `ERR_ROLE_MISMATCH`
+- V2 defines no successful `duplex` semantics; implementations MUST NOT infer request/response or push-direction rules for `duplex` in this version
 
 ## 20. Reserved Control Methods and Events
 
@@ -783,7 +807,7 @@ The receiver SHOULD close the connection after:
 - parseable frame with impossible envelope
 - invalid first request
 - invalid hello shape
-- incoming frame exceeds negotiated size
+- incoming frame exceeds local pre-handshake safety size or negotiated post-handshake size
 
 ## 22. Client Reconnect Behavior
 
@@ -796,16 +820,18 @@ Reconnect on:
 - socket EOF
 - transport connect failure
 - missing heartbeat threshold exceeded
-- hello failure caused by transient availability problem
+- hello failure where `error.retryable = true`
+
+Do not auto-reconnect on hello failure where `error.retryable = false` unless an operator or explicit policy overrides this behavior.
 
 ### 22.2 Backoff
 
 Recommended algorithm:
 
-- initial delay: `0.5s`
+- initial delay: `0.2s`
 - multiplier: `1.5`
 - jitter: random `0%` to `10%`
-- max delay: `10s`
+- max delay: `2s`
 
 ### 22.3 Reconnect Procedure
 
@@ -814,6 +840,7 @@ Recommended algorithm:
 3. verify returned `protocol_version`, `role`, and `transport`
 4. reactivate negotiated limits
 5. resume push handling
+6. treat the new connection as a new sequence domain for `meta.seq`
 
 ## 23. Daemon Shutdown Behavior
 
@@ -843,6 +870,10 @@ Example error:
 ## 24. Business RPC API
 
 This section defines the current application-level methods carried by V2.
+
+Unless explicitly marked as full wire examples, request snippets in this section describe method payloads only (`method` and `params`) and response snippets describe `result` payloads only.
+
+All business RPC calls MUST still be sent as full V2 request frames containing `v`, `type`, and `id`.
 
 ### 24.1 `ping`
 
@@ -931,7 +962,7 @@ Success result:
     "title": "Write protocol doc",
     "state": "In Progress",
     "priority": 1,
-    "ddl": "04-30",
+    "ddl": "2026-04-30",
     "score": 91.2
   }
 ]
@@ -943,7 +974,7 @@ Result item fields:
 - `title`: string
 - `state`: string
 - `priority`: integer
-- `ddl`: string `MM-DD` or `null`
+- `ddl`: string `YYYY-MM-DD` or `null`
 - `score`: number or `null`
 
 ### 24.4 `task.add`
@@ -1004,7 +1035,7 @@ Optional fields:
 
 - `title`
 - `priority`
-- `ddl`
+- `ddl`: string `YYYY-MM-DD`
 
 Success result:
 
@@ -1056,6 +1087,10 @@ Success result:
 }
 ```
 
+Result field semantics:
+
+- `paused`: array of task ids automatically paused by server side single-active enforcement when starting this task; MAY be empty
+
 ### 24.6 `task.done`
 
 Request params:
@@ -1070,11 +1105,12 @@ Behavior:
 
 Preconditions:
 
-- at least one task in `In Progress` state MUST exist
+- exactly one task in `In Progress` state MUST exist
 
 Failure mapping:
 
 - no active task SHOULD return `ERR_INVALID_PARAMS`
+- more than one active task SHOULD return `ERR_INVALID_PARAMS`
 
 Success result:
 
@@ -1099,11 +1135,12 @@ Behavior:
 
 Preconditions:
 
-- at least one task in `In Progress` state MUST exist
+- exactly one task in `In Progress` state MUST exist
 
 Failure mapping:
 
 - no active task SHOULD return `ERR_INVALID_PARAMS`
+- more than one active task SHOULD return `ERR_INVALID_PARAMS`
 
 Success result:
 
@@ -1317,6 +1354,7 @@ Method-specific implications:
 - `task.done` targets `Done`
 - `task.block` targets `Blocked`
 - `task.resume` targets `In Progress` (when source `Paused`) or `Ready` (when source `Blocked`)
+- daemon invariant for active execution is single-active (`In Progress` count <= 1)
 
 If a requested action violates this whitelist, server SHOULD return `ERR_INVALID_PARAMS`.
 
@@ -1407,11 +1445,14 @@ These strings are case-sensitive.
 | invalid JSON | log and close; response may be impossible |
 | parseable frame but missing required envelope field | `ERR_INVALID_FRAME`, then MAY close |
 | non-hello first request | `ERR_INVALID_FRAME`, then close |
+| pre-handshake frame exceeds local safety limit | `ERR_INVALID_FRAME`, then close |
 | unsupported protocol range | `ERR_UNSUPPORTED_PROTOCOL`, then close |
 | unsupported role or transport | `ERR_ROLE_MISMATCH`, then close |
 | client sends push frame | `ERR_INVALID_FRAME`, then MAY close |
 | unknown method | `ERR_METHOD_NOT_FOUND`, keep connection open |
 | method params invalid | SHOULD return `ERR_INVALID_PARAMS`; legacy implementations MAY return `ERR_INTERNAL` |
+| capability-gated method/event used without accepted capability | SHOULD return `ERR_CAPABILITY_REQUIRED` with `error.data.required_capability` |
+| active-task implicit method sees multiple `In Progress` tasks | SHOULD return `ERR_INVALID_PARAMS` |
 | handler timeout | `ERR_REQUEST_TIMEOUT`, keep connection open |
 | daemon shutting down | `ERR_DAEMON_SHUTTING_DOWN`, keep connection open or close after drain |
 | internal server exception | `ERR_INTERNAL` |
@@ -1429,7 +1470,7 @@ Client:
 Server:
 
 ```json
-{"v":2,"type":"response","id":"h1","result":{"session_id":"sess_1001","protocol_version":2,"server":{"name":"flow-engine","version":"0.1.0"},"role":"rpc","transport":"unix","capabilities":["rpc.task","rpc.templates"],"limits":{"max_frame_bytes":65536,"request_timeout_ms":30000,"heartbeat_interval_ms":15000,"heartbeat_miss_threshold":2}},"error":null}
+{"v":2,"type":"response","id":"h1","result":{"session_id":"sess_1001","protocol_version":2,"server":{"name":"flow-engine","version":"0.1.0"},"role":"rpc","transport":"unix","capabilities":["rpc.task","rpc.templates"],"limits":{"max_frame_bytes":65536,"request_timeout_ms":10000,"heartbeat_interval_ms":3000,"heartbeat_miss_threshold":2}},"error":null}
 ```
 
 ### 28.2 Business Request
@@ -1473,7 +1514,7 @@ Client:
 Server:
 
 ```json
-{"v":2,"type":"response","id":"h2","result":{"session_id":"sess_2001","protocol_version":2,"server":{"name":"flow-engine","version":"0.1.0"},"role":"push","transport":"tcp","capabilities":["push.task_state","push.timer"],"limits":{"max_frame_bytes":65536,"request_timeout_ms":30000,"heartbeat_interval_ms":15000,"heartbeat_miss_threshold":2}},"error":null}
+{"v":2,"type":"response","id":"h2","result":{"session_id":"sess_2001","protocol_version":2,"server":{"name":"flow-engine","version":"0.1.0"},"role":"push","transport":"tcp","capabilities":["push.task_state","push.timer"],"limits":{"max_frame_bytes":65536,"request_timeout_ms":10000,"heartbeat_interval_ms":3000,"heartbeat_miss_threshold":2}},"error":null}
 ```
 
 ### 29.2 Keepalive
@@ -1523,8 +1564,8 @@ These are recommended implementation defaults, not wire constants:
 - TCP host: `127.0.0.1`
 - TCP port: `54321`
 - `max_frame_bytes`: `65536`
-- `request_timeout_ms`: `30000`
-- `heartbeat_interval_ms`: `15000`
+- `request_timeout_ms`: `10000`
+- `heartbeat_interval_ms`: `3000`
 - `heartbeat_miss_threshold`: `2`
 
 Interoperability does not depend on these exact operational defaults because they are negotiated in hello, except for endpoint discovery where both peers need a common starting assumption.

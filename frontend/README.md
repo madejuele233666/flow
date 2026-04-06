@@ -23,10 +23,17 @@ python -m flow_hud.main
 
 Connection endpoint precedence:
 
-1. `[extensions.ipc-client]` explicit plugin fields (`transport/host/port/socket_path`)
+1. runtime explicit override (`set_runtime_endpoint_override(...)`)
 2. env overrides (`FLOW_DAEMON_TRANSPORT`, `FLOW_DAEMON_HOST`, `FLOW_DAEMON_PORT`, `FLOW_DAEMON_SOCKET`)
-3. `[connection]` defaults in `hud_config.toml`
-4. built-in defaults (`tcp`, `127.0.0.1`, `54321`)
+3. `[extensions.ipc-client]` explicit plugin fields (`transport/host/port/socket_path`)
+4. `[connection]` defaults in `hud_config.toml`
+5. built-in defaults (`tcp`, `127.0.0.1`, `54321`)
+
+IPC client runtime tuning precedence:
+
+1. `[extensions.ipc-client]` runtime tuning overrides
+2. `[ipc_client]` defaults in `hud_config.toml`
+3. built-in plugin defaults
 
 ## Test
 

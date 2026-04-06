@@ -85,8 +85,8 @@ def test_hello_success_returns_limits(tmp_path: Path) -> None:
             assert resp.result["protocol_version"] == PROTOCOL_VERSION
             limits = resp.result["limits"]
             assert limits["max_frame_bytes"] == 65536
-            assert limits["request_timeout_ms"] == 30000
-            assert limits["heartbeat_interval_ms"] == 15000
+            assert limits["request_timeout_ms"] == 10000
+            assert limits["heartbeat_interval_ms"] == 3000
             assert limits["heartbeat_miss_threshold"] == 2
             writer.close()
             await writer.wait_closed()

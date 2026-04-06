@@ -17,6 +17,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from flow_engine.ipc.defaults import (
+    IPC_DEFAULT_DATA_DIR_NAME,
+    IPC_DEFAULT_HEARTBEAT_INTERVAL_MS,
+    IPC_DEFAULT_HEARTBEAT_MISS_THRESHOLD,
+    IPC_DEFAULT_MAX_FRAME_BYTES,
+    IPC_DEFAULT_PID_NAME,
+    IPC_DEFAULT_REQUEST_TIMEOUT_MS,
+    IPC_DEFAULT_SOCKET_NAME,
+    IPC_DEFAULT_TCP_HOST,
+    IPC_DEFAULT_TCP_PORT,
+)
+
 # toml 在 Python 3.11+ 有标准库 tomllib（只读）
 try:
     import tomllib  # Python 3.11+
@@ -32,7 +44,7 @@ except ModuleNotFoundError:
 class PathsConfig:
     """所有文件系统路径."""
 
-    data_dir: Path = field(default_factory=lambda: Path.home() / ".flow_engine")
+    data_dir: Path = field(default_factory=lambda: Path.home() / IPC_DEFAULT_DATA_DIR_NAME)
     tasks_file: str = "tasks.md"  # 相对于 data_dir
     snapshots_dir: str = "snapshots"
     templates_dir: str = "templates"
@@ -146,12 +158,12 @@ class IPCConfig:
     对应 TOML 配置节: [ipc]
     """
 
-    tcp_host: str = "127.0.0.1"   # TCP 监听地址 (0.0.0.0 允许和内网其他机器连接)
-    tcp_port: int = 54321          # TCP 监听端口
-    max_frame_bytes: int = 65536
-    request_timeout_ms: int = 30000
-    heartbeat_interval_ms: int = 15000
-    heartbeat_miss_threshold: int = 2
+    tcp_host: str = IPC_DEFAULT_TCP_HOST   # TCP 监听地址 (0.0.0.0 允许和内网其他机器连接)
+    tcp_port: int = IPC_DEFAULT_TCP_PORT   # TCP 监听端口
+    max_frame_bytes: int = IPC_DEFAULT_MAX_FRAME_BYTES
+    request_timeout_ms: int = IPC_DEFAULT_REQUEST_TIMEOUT_MS
+    heartbeat_interval_ms: int = IPC_DEFAULT_HEARTBEAT_INTERVAL_MS
+    heartbeat_miss_threshold: int = IPC_DEFAULT_HEARTBEAT_MISS_THRESHOLD
 
 
 @dataclass
@@ -161,8 +173,8 @@ class DaemonConfig:
     对应 TOML 配置节: [daemon]
     """
 
-    socket_name: str = "daemon.sock"           # Unix Socket 文件名（相对于 data_dir）
-    pid_name: str = "daemon.pid"               # PID 文件名（相对于 data_dir）
+    socket_name: str = IPC_DEFAULT_SOCKET_NAME  # Unix Socket 文件名（相对于 data_dir）
+    pid_name: str = IPC_DEFAULT_PID_NAME        # PID 文件名（相对于 data_dir）
 
 
 @dataclass

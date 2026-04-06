@@ -1,0 +1,19 @@
+{
+  "change": "refactor-ipc-protocol-v2",
+  "phase": "artifact_gate",
+  "captured_at": "2026-04-06T08:59:34+08:00",
+  "runs": [
+    {
+      "agent_id": "019d6047-ce97-7d10-945f-498bc6312d41",
+      "template": "verify-reviewer-inline-v1",
+      "final_state": "pass_with_warnings",
+      "summary": "Found one WARNING: template-mode ddl format was not explicit."
+    },
+    {
+      "agent_id": "019d604a-7ed5-71d2-b2f4-532dc813d80a",
+      "template": "verify-reviewer-inline-v1",
+      "final_state": "pass",
+      "summary": "Fresh rerun after repair passed with zero findings."
+    }
+  ]
+}

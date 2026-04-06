@@ -26,8 +26,8 @@ def _hello_result(role: str, transport: str) -> dict:
         "capabilities": [],
         "limits": {
             "max_frame_bytes": 65536,
-            "request_timeout_ms": 30000,
-            "heartbeat_interval_ms": 15000,
+            "request_timeout_ms": 10000,
+            "heartbeat_interval_ms": 3000,
             "heartbeat_miss_threshold": 2,
         },
     }
@@ -52,9 +52,9 @@ class MockDaemon:
         self.roles: dict[asyncio.StreamWriter, str] = {}
         self.hello_count_by_role: dict[str, int] = {"rpc": 0, "push": 0}
         self.push_hello_times: list[float] = []
-        self.request_timeout_ms = 30000
+        self.request_timeout_ms = 10000
         self.max_frame_bytes = 65536
-        self.heartbeat_interval_ms = 15000
+        self.heartbeat_interval_ms = 3000
         self.heartbeat_miss_threshold = 2
         self.hello_protocol_version_override: int | None = None
         self.hello_role_override: str | None = None
@@ -336,7 +336,7 @@ async def test_push_eof_disconnect_uses_backoff_rehello(socket_path):
         await daemon.close_push_clients()
         await asyncio.sleep(0.9)
         assert len(daemon.push_hello_times) >= 2
-        assert daemon.push_hello_times[1] - daemon.push_hello_times[0] >= 0.45
+        assert daemon.push_hello_times[1] - daemon.push_hello_times[0] >= 0.18
     finally:
         plugin.teardown()
         await daemon.stop()
