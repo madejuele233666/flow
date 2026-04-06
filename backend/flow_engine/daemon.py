@@ -470,3 +470,7 @@ async def run_daemon() -> None:
     )
     daemon = FlowDaemon()
     await daemon.start()
+
+
+if __name__ == "__main__":
+    asyncio.run(run_daemon())

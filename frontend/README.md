@@ -7,6 +7,16 @@ This workspace contains the Flow HUD frontend:
 - `hud_config.example.toml` HUD configuration example
 - `pyproject.toml` frontend package metadata
 
+## Runtime Position
+
+`frontend/` represents the HUD runtime that is intended to run on Windows.
+
+The current repository and day-to-day development environment may live in WSL, but that is a development convenience, not the target deployment assumption for the HUD itself.
+
+When frontend transport or packaging decisions differ between WSL/Linux and Windows, prefer the Windows runtime model unless a document explicitly states that the behavior is development-only.
+
+For the concrete lessons learned while building the Windows desktop launcher and syncing from WSL, see [docs/windows-launcher-postmortem.md](/home/madejuele/projects/flow/docs/windows-launcher-postmortem.md).
+
 ## Install
 
 ```bash

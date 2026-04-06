@@ -49,14 +49,15 @@ class HudPluginRegistry:
     def __init__(self) -> None:
         self._plugins: dict[str, HudPlugin] = {}
 
-    def register(self, plugin: HudPlugin) -> None:
+    def register(self, plugin: HudPlugin) -> bool:
         """注册一个插件实例（编程式）."""
         name = plugin.manifest.name
         if name in self._plugins:
             logger.warning("plugin %r already registered, skipping", name)
-            return
+            return False
         self._plugins[name] = plugin
         logger.info("plugin registered: %s v%s", name, plugin.manifest.version)
+        return True
 
     def discover(self) -> list[str]:
         """扫描 Python entry_points 自动发现并注册插件.

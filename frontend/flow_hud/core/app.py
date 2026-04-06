@@ -51,7 +51,7 @@ class HudApp:
     测试时可传入 custom_config 替换任意组件。
     """
 
-    def __init__(self, config: HudConfig | None = None) -> None:
+    def __init__(self, config: HudConfig | None = None, *, discover_plugins: bool = True) -> None:
         # ── 1. 配置 ──
         self.config = config or HudConfig.load()
 
@@ -94,7 +94,7 @@ class HudApp:
         )
 
         # ── 8. 插件自动发现 + 分级 setup ──
-        if not self.config.safe_mode:
+        if discover_plugins and not self.config.safe_mode:
             self.plugins.discover()
         self.plugins.setup_all(
             ctx=self.plugin_context,
@@ -106,9 +106,10 @@ class HudApp:
         self._wire_events()
 
         logger.info(
-            "HudApp initialized (plugins=%d, safe_mode=%s, data_dir=%s)",
+            "HudApp initialized (plugins=%d, safe_mode=%s, discover_plugins=%s, data_dir=%s)",
             len(self.plugins.names()),
             self.config.safe_mode,
+            discover_plugins,
             self.config.data_dir,
         )
 

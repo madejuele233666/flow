@@ -13,3 +13,8 @@ dist/
 verification_report.json
 verification_report.md
 sourcecode.zip
+.flow-launcher-venv/
+.agent/
+openspec/
+docs/
+.gitignore

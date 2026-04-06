@@ -252,3 +252,5 @@ conformance 用例文件（`conformance/*.json`）最小字段：
 2. 先落地 Phase A：把 [ipc-protocol-v2.md](/home/madejuele/projects/flow/docs/ipc-protocol-v2.md) 拆成可机读 schema + conformance 向量。
 3. 在 CI 增加最小黑盒矩阵任务（latest vs latest，latest vs n-1）。
 4. 完成后再推进生成链路替换，避免一次性大改风险。
+
+如果当前阶段决定优先交付产品、暂缓 `ipc-spec-repo-extraction`，则必须遵守过渡期约束，避免把 shared runtime 过渡态固化为长期架构。见：[ipc-product-first-guardrails.md](/home/madejuele/projects/flow/docs/ipc-product-first-guardrails.md)。
