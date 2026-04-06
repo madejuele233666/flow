@@ -1,31 +1,51 @@
 # Capability: IPC Client
 
 ## Purpose
-The IPC Client capability provides a high-level, decoupled connection between the HUD and the Flow Engine daemon. It ensures that HUD can receive real-time updates (pushes) and send requests to the engine without direct package dependencies, following an anti-corruption layer pattern.
+The IPC Client capability provides a decoupled connection between HUD and daemon through a shared IPC V2 contract. It ensures role-based channel negotiation, stable request/response mapping, and resilient push delivery without leaking backend internals.
 
 ## Requirements
 
 ### Requirement: Plugin Initialization and Connection
-The IpcClientPlugin MUST establish an asynchronous connection to the main engine's Unix Domain Socket upon setup.
+The IpcClientPlugin MUST initialize transport-agnostic IPC connections using shared V2 contract primitives, and MUST complete `session.hello` negotiation for each role-specific channel before serving HUD traffic.
 
-#### Scenario: Successful connection
+#### Scenario: Successful role-based initialization
 - **WHEN** the plugin is initialized via `setup(ctx)`
-- **THEN** it starts a background thread that connects to `~/.flow_engine/daemon.sock`
+- **THEN** it starts a long-lived `push` channel and prepares an `rpc` request channel using configured transport profile
+- **AND** each channel performs hello negotiation before business frames are processed
 
-#### Scenario: Connection fails
-- **WHEN** the daemon is not running or the socket is unavailable
-- **THEN** it must log a warning and begin an exponential backoff retry mechanism (e.g., up to 10 seconds between retries) without crashing the HUD.
+#### Scenario: Hello negotiation fails
+- **WHEN** daemon version or role negotiation fails during setup or reconnect
+- **THEN** the plugin returns/logs a structured protocol error and enters bounded retry behavior without crashing HUD
 
 ### Requirement: Receive and Dispatch Pushes
-The plugin MUST continuously listen for Push messages from the daemon and dispatch them as HUD events.
+The plugin MUST receive daemon pushes only from a negotiated `push` role channel, decode payloads with the shared V2 contract, and dispatch adapted HUD events through the existing event bus boundary.
 
-#### Scenario: Push received
-- **WHEN** the daemon sends a Push message (e.g., `{"type": "push", "event": "timer.tick", "data": {"tick": 1}}`)
-- **THEN** the plugin attempts to parse it into a specialized dataclass via adapters, falling back to an `IpcMessageReceivedPayload`, and calls `ctx.event_bus.emit_background`.
+#### Scenario: Push received and adapted
+- **WHEN** daemon sends a V2 push frame after successful hello
+- **THEN** the plugin decodes it with shared codec, adapts domain payload, and emits `HudEventType.IPC_MESSAGE_RECEIVED` in background
+- **AND** capability-gated extension events are only consumed when that capability appears in hello response `capabilities`
 
-### Requirement: Send Request messages (Future / MVP Preparation)
-The plugin MUST prepare a mechanism to send Request messages to the daemon, although the primary MVP focus is listening to pushes.
+#### Scenario: Push channel reconnects
+- **WHEN** the push channel disconnects unexpectedly
+- **THEN** the plugin reconnects with backoff and repeats hello negotiation before resuming push dispatch
 
-#### Scenario: Request dispatched
-- **WHEN** HUD internal components request to send an IPC message
-- **THEN** the plugin routes the Request over the socket and awaits the Response, ensuring it does not block the Qt Main Event Loop.
+#### Scenario: Hello failure retry policy
+- **WHEN** hello response contains structured error with `retryable = true`
+- **THEN** plugin enters reconnect/backoff loop
+- **AND WHEN** hello response contains `retryable = false`
+- **THEN** plugin does not auto-retry indefinitely without external policy override
+
+### Requirement: Send Request messages
+The plugin MUST send business requests through a negotiated `rpc` role channel and map daemon structured errors into the plugin contract (`ok`, `result`, `error_code`, `message`) without leaking backend runtime internals.
+
+#### Scenario: Request succeeds
+- **WHEN** HUD component calls `request(method, **params)` and daemon returns success
+- **THEN** plugin returns `{"ok": true, "result": <value>, "error_code": null, "message": null}`
+
+#### Scenario: Structured daemon error is returned
+- **WHEN** daemon responds with a V2 structured error object
+- **THEN** plugin maps `error.code` to `error_code` and `error.message` to `message` while preserving a stable API shape
+
+#### Scenario: Protocol mismatch during request
+- **WHEN** request channel receives malformed or incompatible protocol data
+- **THEN** plugin returns a protocol mismatch error code and does not expose raw backend stack traces to HUD callers
