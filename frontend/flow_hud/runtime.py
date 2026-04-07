@@ -71,8 +71,13 @@ def create_hud_app(
     from flow_hud.core.config import HudConfig
 
     hud_config = config or HudConfig.load()
+    plugin_specs = runtime_plugin_specs(runtime_profile)
     hud_app = HudApp(config=hud_config, discover_plugins=discover_plugins)
-    setup_runtime_plugins(hud_app, runtime_plugin_specs(runtime_profile))
+    try:
+        setup_runtime_plugins(hud_app, plugin_specs)
+    except Exception:
+        hud_app.shutdown()
+        raise
     return hud_app
 
 

@@ -50,6 +50,38 @@ class HudRuntimeGateway(Protocol):
     def current_state_value(self) -> str: ...
 
 
+@runtime_checkable
+class HudPluginContext(Protocol):
+    @property
+    def owner(self) -> str | None: ...
+
+    @property
+    def event_bus(self) -> HudEventBusRegistrar: ...
+
+    def subscribe_event(self, event_type: Any, handler: Callable) -> None: ...
+    def unsubscribe_event(self, event_type: Any, handler: Callable) -> None: ...
+    def register_widget(self, name: str, widget: Any, *, slot: str = "center") -> dict[str, Any]: ...
+    def register_hook(self, implementor: object) -> list[str]: ...
+    def unregister_hook(self, implementor: object) -> None: ...
+    def get_extension_config(self, plugin_name: str) -> dict[str, Any]: ...
+    def get_connection_config(self) -> dict[str, Any]: ...
+    def get_ipc_client_config(self) -> dict[str, Any]: ...
+
+    @property
+    def data_dir(self) -> Path: ...
+
+    @property
+    def safe_mode(self) -> bool: ...
+
+
+@runtime_checkable
+class HudAdminContext(HudPluginContext, Protocol):
+    def request_transition(self, target: str) -> dict[str, str]: ...
+
+    @property
+    def current_state(self) -> str: ...
+
+
 class _PluginRuntimeGatewayFacade:
     """Narrow runtime gateway that hides host internals from plugin contexts."""
 
@@ -79,9 +111,11 @@ class _PluginRuntimeGatewayFacade:
         self._unsubscribe_event(event_type, handler, owner=owner)
 
     def emit_event(self, event_type: Any, payload: Any = None) -> None:
+        self._ensure_plugin_event_allowed(event_type)
         self._emit_event(event_type, payload)
 
     def emit_background_event(self, event_type: Any, payload: Any = None) -> None:
+        self._ensure_plugin_event_allowed(event_type)
         self._emit_background_event(event_type, payload)
 
     def register_hook(self, implementor: object, *, owner: str | None) -> list[str]:
@@ -106,6 +140,11 @@ class _PluginRuntimeGatewayFacade:
             owner=owner,
             source=source,
         )
+
+    @staticmethod
+    def _ensure_plugin_event_allowed(event_type: Any) -> None:
+        if event_type in _HOST_OWNED_EVENTS:
+            raise ValueError("plugin context cannot emit host-owned lifecycle events")
 
 
 class _AdminRuntimeGatewayFacade(_PluginRuntimeGatewayFacade):
@@ -140,20 +179,15 @@ class _OwnedEventBusView:
         self._runtime.unsubscribe_event(event_type, handler, owner=self._require_owner())
 
     def emit(self, event_type: Any, payload: Any = None) -> None:
-        self._ensure_plugin_event_allowed(event_type)
+        _PluginRuntimeGatewayFacade._ensure_plugin_event_allowed(event_type)
         self._runtime.emit_event(event_type, payload)
 
     def emit_background(self, event_type: Any, payload: Any = None) -> None:
-        self._ensure_plugin_event_allowed(event_type)
+        _PluginRuntimeGatewayFacade._ensure_plugin_event_allowed(event_type)
         self._runtime.emit_background_event(event_type, payload)
 
-    @staticmethod
-    def _ensure_plugin_event_allowed(event_type: Any) -> None:
-        if event_type in _HOST_OWNED_EVENTS:
-            raise ValueError("plugin context cannot emit host-owned lifecycle events")
 
-
-class HudPluginContext:
+class _HudPluginContextImpl:
     """Standard plugin sandbox with owner-aware registration APIs."""
 
     def __init__(
@@ -168,6 +202,8 @@ class HudPluginContext:
             self.__runtime_gateway = runtime
         else:
             self.__runtime_gateway = _PluginRuntimeGatewayFacade(runtime)
+        # Keep stable private attribute path for compatibility with existing tests/plugins.
+        self._HudPluginContext__runtime_gateway = self.__runtime_gateway
         self._owner = owner
         self._event_bus_view = _OwnedEventBusView(runtime=self.__runtime_gateway, owner=owner)
 
@@ -238,7 +274,7 @@ class HudPluginContext:
         return self._config.safe_mode
 
 
-class HudAdminContext(HudPluginContext):
+class _HudAdminContextImpl(_HudPluginContextImpl):
     """Admin sandbox with read-only state metadata and canonical transition API."""
 
     def __init__(
@@ -260,3 +296,21 @@ class HudAdminContext(HudPluginContext):
     @property
     def current_state(self) -> str:
         return self._HudPluginContext__runtime_gateway.current_state_value()
+
+
+def create_plugin_context(
+    *,
+    config: HudConfig,
+    runtime: HudRuntimeGateway,
+    owner: str | None = None,
+) -> HudPluginContext:
+    return _HudPluginContextImpl(config=config, runtime=runtime, owner=owner)
+
+
+def create_admin_context(
+    *,
+    config: HudConfig,
+    runtime: HudRuntimeGateway,
+    owner: str | None = None,
+) -> HudAdminContext:
+    return _HudAdminContextImpl(config=config, runtime=runtime, owner=owner)

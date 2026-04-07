@@ -115,6 +115,27 @@ def test_service_source_rejects_widget_instance_and_owner(hud_app):
         )
 
 
+def test_rejected_widget_registration_does_not_run_before_hook(hud_app):
+    calls = []
+
+    class Hook:
+        def before_widget_register(self, payload):
+            calls.append((payload.name, payload.slot))
+
+    hud_app.register_hook(Hook(), owner="guard")
+
+    with pytest.raises(ValueError, match="requires owner"):
+        hud_app.register_widget(
+            name="timer",
+            slot="center",
+            widget=QLabel("timer"),
+            owner=None,
+            source="plugin",
+        )
+
+    assert calls == []
+
+
 def test_duplicate_name_replaces_previous_registration(hud_app):
     first = QLabel("first")
     second = QLabel("second")

@@ -19,7 +19,12 @@ from flow_hud.core.hooks import HudHookManager
 from flow_hud.core.hooks_payload import AfterTransitionPayload, BeforeWidgetRegisterPayload, VetoTransitionPayload
 from flow_hud.core.state_machine import HudState, HudStateMachine, can_transition
 from flow_hud.core.widget_slots import ensure_valid_widget_slot
-from flow_hud.plugins.context import HudAdminContext, HudPluginContext
+from flow_hud.plugins.context import (
+    HudAdminContext,
+    HudPluginContext,
+    create_admin_context,
+    create_plugin_context,
+)
 from flow_hud.plugins.registry import HudPluginRegistry
 
 if TYPE_CHECKING:
@@ -68,8 +73,8 @@ class HudApp:
         self._plugin_setup_done: set[str] = set()
         self._admin_routing: dict[str, dict[str, bool]] = {}
 
-        self.plugin_context = HudPluginContext(config=self.config, runtime=self)
-        self.admin_context = HudAdminContext(config=self.config, runtime=self)
+        self.plugin_context = create_plugin_context(config=self.config, runtime=self)
+        self.admin_context = create_admin_context(config=self.config, runtime=self)
 
         if discover_plugins and not self.config.safe_mode:
             self.plugins.discover()
@@ -84,6 +89,12 @@ class HudApp:
         for spec in runtime_specs:
             plugin_class = spec.load_plugin_class()
             plugin_name = plugin_class.manifest.name
+            if plugin_name in profile_admin_routing:
+                logger.warning(
+                    "ignoring duplicate runtime-profile plugin %r (keeping first accepted entry)",
+                    plugin_name,
+                )
+                continue
             existing = self.plugins.get(plugin_name)
             if existing is None:
                 self.plugins.register(plugin_class())
@@ -96,8 +107,7 @@ class HudApp:
                 else:
                     # Runtime profile is declarative authority for overlap resolution.
                     self.plugins.replace(plugin_class())
-            if plugin_name not in profile_order:
-                profile_order.append(plugin_name)
+            profile_order.append(plugin_name)
             profile_admin_routing[plugin_name] = bool(spec.admin)
 
         setup_plan = list(profile_order)
@@ -395,10 +405,10 @@ class HudApp:
         }
 
     def _plugin_context_for_owner(self, owner: str) -> HudPluginContext:
-        return HudPluginContext(config=self.config, runtime=self, owner=owner)
+        return create_plugin_context(config=self.config, runtime=self, owner=owner)
 
     def _admin_context_for_owner(self, owner: str) -> HudAdminContext:
-        return HudAdminContext(config=self.config, runtime=self, owner=owner)
+        return create_admin_context(config=self.config, runtime=self, owner=owner)
 
     def _cleanup_owner(self, owner: str) -> None:
         for event_type, handler in reversed(self._owner_event_handlers.pop(owner, [])):

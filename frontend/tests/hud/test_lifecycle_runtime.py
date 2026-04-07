@@ -129,6 +129,38 @@ def test_profile_plugin_overrides_discovery_plugin_on_name_overlap():
         app.shutdown()
 
 
+def test_runtime_profile_duplicate_name_keeps_first_entry(caplog):
+    class FirstPlugin(HudPlugin):
+        manifest = HudPluginManifest(name="dup")
+        setup_calls = 0
+
+        def setup(self, ctx) -> None:
+            type(self).setup_calls += 1
+
+    class SecondPlugin(HudPlugin):
+        manifest = HudPluginManifest(name="dup")
+        setup_calls = 0
+
+        def setup(self, ctx) -> None:
+            type(self).setup_calls += 1
+
+    app = HudApp(config=HudConfig(safe_mode=False), discover_plugins=False)
+    try:
+        with caplog.at_level("WARNING"):
+            app.setup_plugins([_Spec(FirstPlugin, admin=False), _Spec(SecondPlugin, admin=True)])
+
+        assert isinstance(app.plugins.get("dup"), FirstPlugin)
+        assert FirstPlugin.setup_calls == 1
+        assert SecondPlugin.setup_calls == 0
+        assert app.admin_routing_records()["dup"]["profile_admin"] is False
+        assert any(
+            "ignoring duplicate runtime-profile plugin 'dup'" in record.getMessage()
+            for record in caplog.records
+        )
+    finally:
+        app.shutdown()
+
+
 def test_profile_replacement_is_ignored_after_plugin_already_setup():
     class InitialPlugin(HudPlugin):
         manifest = HudPluginManifest(name="dup")

@@ -95,8 +95,8 @@ class HudPluginRegistry:
                 plugin_cls = ep.load()
                 if isinstance(plugin_cls, type) and issubclass(plugin_cls, HudPlugin):
                     plugin = plugin_cls()
-                    self.register(plugin)
-                    discovered.append(plugin.manifest.name)
+                    if self.register(plugin):
+                        discovered.append(plugin.manifest.name)
                 else:
                     logger.warning(
                         "entry_point %r does not point to a HudPlugin subclass", ep.name,

@@ -8,7 +8,9 @@ from PySide6.QtWidgets import QApplication
 from flow_hud.core.app import HudApp
 from flow_hud.core.config import HudConfig
 from flow_hud.core.events import HudEventType
+from flow_hud.core.events_payload import StateTransitionedPayload
 from flow_hud.core.service import HudLocalService
+from flow_hud.plugins.context import HudAdminContext, HudPluginContext
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 _app = QApplication.instance() or QApplication(sys.argv)
@@ -44,6 +46,22 @@ def test_veto_blocks_transition_and_no_transitioned_event(hud_app):
     _drain_qt_events()
     assert hud_app.current_state_value() == "ghost"
     assert events == []
+
+
+def test_illegal_transition_is_rejected_before_before_transition_hook(hud_app):
+    calls = []
+
+    class Hook:
+        def before_state_transition(self, payload):
+            calls.append((payload.current_state, payload.target_state))
+            return True
+
+    hud_app.register_hook(Hook(), owner="guard")
+
+    with pytest.raises(ValueError, match="illegal transition"):
+        hud_app.transition_to("command")
+
+    assert calls == []
 
 
 def test_successful_transition_emits_after_event_once(hud_app):
@@ -96,6 +114,30 @@ def test_plugin_context_uses_narrow_runtime_gateway(hud_app):
     assert not hasattr(plugin_ctx, "request_transition")
     gateway = getattr(plugin_ctx, "_HudPluginContext__runtime_gateway")
     assert not hasattr(gateway, "transition_to")
+
+
+def test_owner_scoped_contexts_satisfy_protocol_contracts(hud_app):
+    plugin_ctx = hud_app._plugin_context_for_owner("plugin-a")
+    admin_ctx = hud_app._admin_context_for_owner("admin-a")
+
+    assert isinstance(plugin_ctx, HudPluginContext)
+    assert isinstance(admin_ctx, HudAdminContext)
+
+
+def test_hidden_runtime_gateway_cannot_emit_host_owned_lifecycle_event(hud_app):
+    plugin_ctx = hud_app._plugin_context_for_owner("plugin-a")
+    gateway = getattr(plugin_ctx, "_HudPluginContext__runtime_gateway")
+    seen = []
+
+    hud_app.event_bus.subscribe(HudEventType.STATE_TRANSITIONED, lambda event: seen.append(event))
+
+    with pytest.raises(ValueError, match="host-owned lifecycle events"):
+        gateway.emit_event(
+            HudEventType.STATE_TRANSITIONED,
+            StateTransitionedPayload(old_state="fake-old", new_state="fake-new"),
+        )
+
+    assert seen == []
 
 
 def test_transition_rejects_non_runtime_thread_call(hud_app):
