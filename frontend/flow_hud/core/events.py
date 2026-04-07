@@ -46,6 +46,7 @@ class HudEventType(str, Enum):
     STATE_TRANSITIONED   = "state.transitioned"     # HUD 状态转换完成广播
     IPC_MESSAGE_RECEIVED = "ipc.message_received"   # 来自 Flow Engine 的 IPC 消息
     WIDGET_REGISTERED    = "widget.registered"      # UI 插槽注册通知
+    WIDGET_UNREGISTERED  = "widget.unregistered"    # UI 插槽卸载通知
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +137,14 @@ class HudBackgroundEventWorker:
         if self._thread and self._thread.is_alive():
             self._queue.put(self._SENTINEL)  # 写入哨兵值通知循环结束
             self._thread.join(timeout=timeout)
+            if self._thread.is_alive():
+                logger.warning(
+                    "HudBackgroundEventWorker stop timed out after %.2fs; worker thread still alive",
+                    timeout,
+                )
+                return
+            self._thread = None
+        elif self._thread is not None and not self._thread.is_alive():
             self._thread = None
         logger.debug("HudBackgroundEventWorker stopped")
 
@@ -256,6 +265,12 @@ class HudEventBus(QObject):
         适用于非关键路径（统计打点、日志上报等）。
         若无 HudBackgroundEventWorker 注入，则静默降级为日志警告。
         """
+        if payload is not None:
+            if not is_dataclass(payload):
+                raise TypeError(f"Event payload must be a dataclass, got {type(payload)}")
+            if not getattr(payload.__class__, "__dataclass_params__").frozen:
+                raise TypeError(f"Event payload must be frozen (frozen=True), got {type(payload)}")
+
         event = HudEvent(type=event_type, payload=payload)
         handlers = list(self._subscribers.get(event_type, []))
 

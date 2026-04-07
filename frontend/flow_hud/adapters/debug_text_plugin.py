@@ -9,8 +9,8 @@
 
 用法（在 main.py 或测试中手动注册）:
     plugin = DebugTextPlugin()
-    registry.register(plugin)
-    registry.setup_all(ctx, ...)
+    hud_app.plugins.register(plugin)
+    hud_app.setup_plugins()
 """
 
 from __future__ import annotations

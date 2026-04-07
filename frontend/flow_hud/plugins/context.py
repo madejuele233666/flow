@@ -1,54 +1,25 @@
-"""HUD 插件沙盒环境 (Plugin Context).
-
-对标主引擎 plugins/context.py → PluginContext + AdminContext — 完整双层结构复刻。
-
-设计要点:
-- HudPluginContext（普通沙盒）：只暴露注册型 API，防止插件访问底层内部状态。
-- HudAdminContext（高权限超集）：在普通沙盒基础上，额外以只读 @property Any 暴露
-  底层引用（state_machine, event_bus, hook_manager），防止覆写，避免循环 import。
-- 底层引用一律用 Any 类型注释，禁止在此文件中 import 具体类。
-
-用法（插件侧）:
-    class MyPlugin(HudPlugin):
-        def setup(self, ctx: HudPluginContext) -> None:
-            ctx.subscribe_event(HudEventType.MOUSE_GLOBAL_MOVE, self.on_mouse)
-            ctx.register_hook(self)
-            cfg = ctx.get_extension_config(\"my-plugin\")
-
-    class AdminPlugin(HudPlugin):
-        def setup(self, ctx: HudAdminContext) -> None:
-            # 高权限：可访问底层引用
-            self._sm = ctx.state_machine
-"""
+"""HUD plugin sandbox contexts with owner-aware runtime registration."""
 
 from __future__ import annotations
 
-import logging
+import copy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from flow_hud.core.config import HudConfig
 
-logger = logging.getLogger(__name__)
+from flow_hud.core.events import HudEventType
 
-
-# ---------------------------------------------------------------------------
-# 协议定义 — 强类型契约
-# ---------------------------------------------------------------------------
-
-@runtime_checkable
-class HudHookRegistrar(Protocol):
-    """HUD 钩子注册协议 (对标 flow_engine.HookRegistrar)."""
-
-    def register(self, implementor: object) -> list[str]: ...
-    def unregister(self, implementor: object) -> None: ...
+_HOST_OWNED_EVENTS = {
+    HudEventType.STATE_TRANSITIONED,
+    HudEventType.WIDGET_REGISTERED,
+    HudEventType.WIDGET_UNREGISTERED,
+}
 
 
 @runtime_checkable
 class HudEventBusRegistrar(Protocol):
-    """HUD 事件总线注册协议 (插件侧沙盒)."""
-
     def subscribe(self, event_type: Any, handler: Callable) -> None: ...
     def unsubscribe(self, event_type: Any, handler: Callable) -> None: ...
     def emit(self, event_type: Any, payload: Any = None) -> None: ...
@@ -56,93 +27,188 @@ class HudEventBusRegistrar(Protocol):
 
 
 @runtime_checkable
-class HudStateMachineProtocol(Protocol):
-    """HUD 状态机契约 (插件侧沙盒)."""
+class HudRuntimeGateway(Protocol):
+    def subscribe_event(self, event_type: Any, handler: Callable, *, owner: str | None) -> None: ...
+    def unsubscribe_event(self, event_type: Any, handler: Callable, *, owner: str | None) -> None: ...
+    def emit_event(self, event_type: Any, payload: Any = None) -> None: ...
+    def emit_background_event(self, event_type: Any, payload: Any = None) -> None: ...
 
-    @property
-    def current_state(self) -> Any: ...  # 返回 HudState 枚举，但避免显式依赖
+    def register_hook(self, implementor: object, *, owner: str | None) -> list[str]: ...
+    def unregister_hook(self, implementor: object, *, owner: str | None) -> None: ...
 
-    def transition(self, target: Any) -> tuple[Any, Any]: ...
+    def register_widget(
+        self,
+        name: str,
+        slot: str,
+        *,
+        widget: Any | None,
+        owner: str | None,
+        source: str,
+    ) -> dict[str, Any]: ...
+
+    def transition_to(self, target: str) -> dict[str, str]: ...
+    def current_state_value(self) -> str: ...
 
 
-# ---------------------------------------------------------------------------
-# HudPluginContext — 普通沙盒
-# ---------------------------------------------------------------------------
+class _PluginRuntimeGatewayFacade:
+    """Narrow runtime gateway that hides host internals from plugin contexts."""
+
+    __slots__ = (
+        "_subscribe_event",
+        "_unsubscribe_event",
+        "_emit_event",
+        "_emit_background_event",
+        "_register_hook",
+        "_unregister_hook",
+        "_register_widget",
+    )
+
+    def __init__(self, runtime: HudRuntimeGateway) -> None:
+        self._subscribe_event = runtime.subscribe_event
+        self._unsubscribe_event = runtime.unsubscribe_event
+        self._emit_event = runtime.emit_event
+        self._emit_background_event = runtime.emit_background_event
+        self._register_hook = runtime.register_hook
+        self._unregister_hook = runtime.unregister_hook
+        self._register_widget = runtime.register_widget
+
+    def subscribe_event(self, event_type: Any, handler: Callable, *, owner: str | None) -> None:
+        self._subscribe_event(event_type, handler, owner=owner)
+
+    def unsubscribe_event(self, event_type: Any, handler: Callable, *, owner: str | None) -> None:
+        self._unsubscribe_event(event_type, handler, owner=owner)
+
+    def emit_event(self, event_type: Any, payload: Any = None) -> None:
+        self._emit_event(event_type, payload)
+
+    def emit_background_event(self, event_type: Any, payload: Any = None) -> None:
+        self._emit_background_event(event_type, payload)
+
+    def register_hook(self, implementor: object, *, owner: str | None) -> list[str]:
+        return self._register_hook(implementor, owner=owner)
+
+    def unregister_hook(self, implementor: object, *, owner: str | None) -> None:
+        self._unregister_hook(implementor, owner=owner)
+
+    def register_widget(
+        self,
+        name: str,
+        slot: str,
+        *,
+        widget: Any | None,
+        owner: str | None,
+        source: str,
+    ) -> dict[str, Any]:
+        return self._register_widget(
+            name=name,
+            slot=slot,
+            widget=widget,
+            owner=owner,
+            source=source,
+        )
+
+
+class _AdminRuntimeGatewayFacade(_PluginRuntimeGatewayFacade):
+    __slots__ = ("_transition_to", "_current_state_value")
+
+    def __init__(self, runtime: HudRuntimeGateway) -> None:
+        super().__init__(runtime)
+        self._transition_to = runtime.transition_to
+        self._current_state_value = runtime.current_state_value
+
+    def transition_to(self, target: str) -> dict[str, str]:
+        return self._transition_to(target)
+
+    def current_state_value(self) -> str:
+        return self._current_state_value()
+
+
+class _OwnedEventBusView:
+    def __init__(self, runtime: _PluginRuntimeGatewayFacade, owner: str | None) -> None:
+        self._runtime = runtime
+        self._owner = owner
+
+    def _require_owner(self) -> str:
+        if self._owner is None:
+            raise ValueError("owner-scoped context required")
+        return self._owner
+
+    def subscribe(self, event_type: Any, handler: Callable) -> None:
+        self._runtime.subscribe_event(event_type, handler, owner=self._require_owner())
+
+    def unsubscribe(self, event_type: Any, handler: Callable) -> None:
+        self._runtime.unsubscribe_event(event_type, handler, owner=self._require_owner())
+
+    def emit(self, event_type: Any, payload: Any = None) -> None:
+        self._ensure_plugin_event_allowed(event_type)
+        self._runtime.emit_event(event_type, payload)
+
+    def emit_background(self, event_type: Any, payload: Any = None) -> None:
+        self._ensure_plugin_event_allowed(event_type)
+        self._runtime.emit_background_event(event_type, payload)
+
+    @staticmethod
+    def _ensure_plugin_event_allowed(event_type: Any) -> None:
+        if event_type in _HOST_OWNED_EVENTS:
+            raise ValueError("plugin context cannot emit host-owned lifecycle events")
+
 
 class HudPluginContext:
-    """普通插件的安全沙盒 — 只暴露注册型 API.
-
-    对标主引擎 PluginContext — 功能映射：
-    - subscribe_event  ← EventBus.subscribe
-    - register_widget  ← 向 UI canvas 注册小部件
-    - register_hook    ← HookManager.register
-    - get_extension_config ← config.extensions.get
-    - data_dir / safe_mode ← 只读配置属性
-
-    底层引用（hooks, event_bus）通过 Protocol 注入，实现防泄漏。
-    禁止在此文件中 import 具体类，避免循环依赖。
-    """
+    """Standard plugin sandbox with owner-aware registration APIs."""
 
     def __init__(
         self,
+        *,
         config: HudConfig,
-        hooks: HudHookRegistrar,
-        event_bus: HudEventBusRegistrar,
+        runtime: HudRuntimeGateway | _PluginRuntimeGatewayFacade,
+        owner: str | None = None,
     ) -> None:
         self._config = config
-        self._hooks = hooks
-        self._event_bus = event_bus
-        # UI 画布注册表：name → widget（Any，避免 PySide6 依赖）
-        self._widgets: dict[str, Any] = {}
+        if isinstance(runtime, _PluginRuntimeGatewayFacade):
+            self.__runtime_gateway = runtime
+        else:
+            self.__runtime_gateway = _PluginRuntimeGatewayFacade(runtime)
+        self._owner = owner
+        self._event_bus_view = _OwnedEventBusView(runtime=self.__runtime_gateway, owner=owner)
+
+    @property
+    def owner(self) -> str | None:
+        return self._owner
 
     @property
     def event_bus(self) -> HudEventBusRegistrar:
-        """事件总线访问器（受限制的 Protocol）."""
-        return self._event_bus
+        return self._event_bus_view
 
-    # ── 注册 API ──
+    def _require_owner(self) -> str:
+        if self._owner is None:
+            raise ValueError("owner-scoped context required")
+        return self._owner
 
     def subscribe_event(self, event_type: Any, handler: Callable) -> None:
-        """注册事件监听器（委托 EventBus）."""
-        self._event_bus.subscribe(event_type, handler)
+        self.__runtime_gateway.subscribe_event(event_type, handler, owner=self._require_owner())
 
     def unsubscribe_event(self, event_type: Any, handler: Callable) -> None:
-        """移除事件监听器."""
-        self._event_bus.unsubscribe(event_type, handler)
+        self.__runtime_gateway.unsubscribe_event(event_type, handler, owner=self._require_owner())
 
-    def register_widget(self, name: str, widget: Any) -> None:
-        """向 UI 画布注册小部件.
-
-        Args:
-            name: 小部件名称（唯一标识符）
-            widget: Qt 小部件实例（QWidget 或其子类）
-        """
-        if name in self._widgets:
-            logger.warning("widget %r already registered, overwriting", name)
-        self._widgets[name] = widget
-        logger.debug("widget registered: %r", name)
+    def register_widget(self, name: str, widget: Any, *, slot: str = "center") -> dict[str, Any]:
+        return self.__runtime_gateway.register_widget(
+            name=name,
+            slot=slot,
+            widget=widget,
+            owner=self._require_owner(),
+            source="plugin",
+        )
 
     def register_hook(self, implementor: object) -> list[str]:
-        """注册钩子实现（委托 HookManager）.
-
-        Returns:
-            成功注册的钩子名列表。
-        """
-        return self._hooks.register(implementor)
+        return self.__runtime_gateway.register_hook(implementor, owner=self._require_owner())
 
     def unregister_hook(self, implementor: object) -> None:
-        """移除钩子实现."""
-        self._hooks.unregister(implementor)
+        self.__runtime_gateway.unregister_hook(implementor, owner=self._require_owner())
 
     def get_extension_config(self, plugin_name: str) -> dict[str, Any]:
-        """获取插件专属配置（从 [extensions.xxx] 透传）.
-
-        返回空字典如果没有配置，不会抛出异常。
-        """
-        return self._config.extensions.get(plugin_name, {})
+        return copy.deepcopy(self._config.extensions.get(plugin_name, {}))
 
     def get_connection_config(self) -> dict[str, Any]:
-        """获取 HUD 连接默认配置（来自 [connection]）。"""
         return {
             "transport": self._config.connection_transport,
             "host": self._config.connection_host,
@@ -151,7 +217,6 @@ class HudPluginContext:
         }
 
     def get_ipc_client_config(self) -> dict[str, Any]:
-        """获取 IPC 客户端运行时调优配置（来自 [ipc_client]）。"""
         return {
             "thread_join_timeout_s": self._config.ipc_thread_join_timeout_s,
             "retry_initial_backoff_s": self._config.ipc_retry_initial_backoff_s,
@@ -164,61 +229,34 @@ class HudPluginContext:
             "push_capabilities": list(self._config.ipc_push_capabilities),
         }
 
-    # ── 只读配置 ──
-
     @property
     def data_dir(self) -> Path:
-        """数据目录（只读）."""
         return self._config.data_dir
 
     @property
     def safe_mode(self) -> bool:
-        """是否处于安全模式."""
         return self._config.safe_mode
 
-    # ── 内部工具（供 HudApp 访问）──
-
-    def get_widgets(self) -> dict[str, Any]:
-        """返回已注册的全部小部件（供 UI 画布消费）."""
-        return dict(self._widgets)
-
-
-# ---------------------------------------------------------------------------
-# HudAdminContext — 高权限沙盒
-# ---------------------------------------------------------------------------
 
 class HudAdminContext(HudPluginContext):
-    """受信任插件的高权限沙盒 — HudPluginContext 的超集.
-
-    对标主引擎 AdminContext(PluginContext) — 适配：
-    - 主引擎暴露 engine（TransitionEngine），HUD 暴露 state_machine（HudStateMachine）
-    - 额外开放 hook_manager 引用（主引擎无此字段，HUD 新增以支持高级工具插件）
-
-    设计要点：
-    - 纯子类，只做加法，完全兼容 HudPluginContext 类型注解。
-    - 底层引用一律只读 @property，并使用 Protocol 强化类型安全。
-    - TYPE_CHECKING 延迟导入，零运行时耦合（防循环 import）。
-    """
+    """Admin sandbox with read-only state metadata and canonical transition API."""
 
     def __init__(
         self,
-        config: HudConfig,
-        hooks: HudHookRegistrar,
-        event_bus: HudEventBusRegistrar,
         *,
-        state_machine: HudStateMachineProtocol | None = None,
-        hook_manager: HudHookRegistrar | None = None,
+        config: HudConfig,
+        runtime: HudRuntimeGateway | _AdminRuntimeGatewayFacade,
+        owner: str | None = None,
     ) -> None:
-        super().__init__(config=config, hooks=hooks, event_bus=event_bus)
-        self._state_machine = state_machine
-        self._hook_manager = hook_manager
+        if isinstance(runtime, _AdminRuntimeGatewayFacade):
+            admin_runtime = runtime
+        else:
+            admin_runtime = _AdminRuntimeGatewayFacade(runtime)
+        super().__init__(config=config, runtime=admin_runtime, owner=owner)
+
+    def request_transition(self, target: str) -> dict[str, str]:
+        return self._HudPluginContext__runtime_gateway.transition_to(target)
 
     @property
-    def state_machine(self) -> HudStateMachineProtocol | None:
-        """HUD 状态机（只读，Protocol 契约）."""
-        return self._state_machine
-
-    @property
-    def hook_manager(self) -> HudHookRegistrar | None:
-        """钩子管理器（只读，Protocol 契约）."""
-        return self._hook_manager
+    def current_state(self) -> str:
+        return self._HudPluginContext__runtime_gateway.current_state_value()

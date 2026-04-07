@@ -71,3 +71,10 @@ class WidgetRegisteredPayload:
 
     name: str
     slot: str
+
+
+@dataclass(frozen=True)
+class WidgetUnregisteredPayload:
+    """UI 插槽卸载通知 — WIDGET_UNREGISTERED 事件载荷."""
+
+    name: str

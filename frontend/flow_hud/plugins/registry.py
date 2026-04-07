@@ -59,6 +59,21 @@ class HudPluginRegistry:
         logger.info("plugin registered: %s v%s", name, plugin.manifest.version)
         return True
 
+    def replace(self, plugin: HudPlugin) -> None:
+        """Replace an existing plugin implementation by manifest name."""
+        name = plugin.manifest.name
+        previous = self._plugins.get(name)
+        self._plugins[name] = plugin
+        if previous is None:
+            logger.info("plugin registered: %s v%s", name, plugin.manifest.version)
+            return
+        logger.warning(
+            "plugin %r implementation replaced: %s -> %s",
+            name,
+            type(previous).__name__,
+            type(plugin).__name__,
+        )
+
     def discover(self) -> list[str]:
         """扫描 Python entry_points 自动发现并注册插件.
 
@@ -99,32 +114,18 @@ class HudPluginRegistry:
         admin_ctx: HudAdminContext | None = None,
         admin_names: list[str] | None = None,
     ) -> None:
-        """对所有已注册的插件调用 setup(ctx)，按白名单分级下发 Context.
-
-        Args:
-            ctx: 标准沙盒上下文（受限 API）。
-            admin_ctx: 高权限沙盒上下文（可选）。
-            admin_names: 允许获得 admin_ctx 的插件名白名单。
-        """
-        _admin_set = set(admin_names or [])
-        for name, plugin in self._plugins.items():
-            try:
-                target_ctx = admin_ctx if (admin_ctx and name in _admin_set) else ctx
-                plugin.setup(target_ctx)
-                logger.info(
-                    "plugin %r setup complete (admin=%s)", name, name in _admin_set
-                )
-            except Exception:
-                logger.exception("plugin %r setup failed", name)
+        """Deprecated bypass path kept only for compatibility guardrails."""
+        raise RuntimeError(
+            "HudPluginRegistry.setup_all is disabled; use HudApp.setup_plugins(...) as "
+            "the single lifecycle authority"
+        )
 
     def teardown_all(self) -> None:
-        """对所有已注册的插件调用 teardown()，以逆序执行保证依赖清理。"""
-        for name, plugin in reversed(list(self._plugins.items())):
-            try:
-                plugin.teardown()
-                logger.debug("plugin %r teardown complete", name)
-            except Exception:
-                logger.exception("plugin %r teardown failed", name)
+        """Deprecated bypass path kept only for compatibility guardrails."""
+        raise RuntimeError(
+            "HudPluginRegistry.teardown_all is disabled; use HudApp.shutdown() as "
+            "the single lifecycle authority"
+        )
 
     def get(self, name: str) -> HudPlugin | None:
         """按名称获取插件实例."""

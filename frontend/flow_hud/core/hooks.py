@@ -197,7 +197,10 @@ class HudHookManager:
         for hook_name in HUD_HOOK_SPECS:
             method = getattr(implementor, hook_name, None)
             if method is not None and callable(method):
-                self._handlers[hook_name].append(method)
+                handlers = self._handlers[hook_name]
+                if method in handlers:
+                    continue
+                handlers.append(method)
                 # 为每个 handler 创建独立熔断器
                 self._breakers[id(method)] = HookBreaker(
                     failure_threshold=self._failure_threshold,
@@ -213,9 +216,14 @@ class HudHookManager:
         """移除某个实现者的全部钩子."""
         for hook_name in HUD_HOOK_SPECS:
             method = getattr(implementor, hook_name, None)
-            if method in self._handlers.get(hook_name, []):
-                self._handlers[hook_name].remove(method)
-                self._breakers.pop(id(method), None)
+            handlers = self._handlers.get(hook_name, [])
+            retained: list[Callable[..., Any]] = []
+            for handler in handlers:
+                if method is not None and handler == method:
+                    self._breakers.pop(id(handler), None)
+                else:
+                    retained.append(handler)
+            self._handlers[hook_name] = retained
 
     def call(self, hook_name: str, payload: Any = None) -> Any:
         """按策略执行钩子（带熔断保护）.
@@ -277,8 +285,9 @@ class HudHookManager:
     def _safe_call(self, handler: Callable, payload: Any) -> Any:
         """带熔断 + 超时保护的安全调用.
 
-        支持 sync handler（HUD 环境中钩子应为同步，以配合 Qt 主线程）。
-        dev_mode=True 时异常直接上抛，不静默、不熔断。
+        UI 生命周期相关钩子必须在当前线程执行，避免跨线程访问 Qt 对象。
+        timeout 语义保留为“执行时长超阈值则按失败计入 breaker”，
+        不再通过额外线程强行中断 handler。
         """
         breaker = self._breakers.get(id(handler))
         if breaker and breaker.is_open:
@@ -286,51 +295,27 @@ class HudHookManager:
             return None
 
         try:
-            import signal as _signal_mod
-
-            # 使用 threading.Timer 实现超时（兼容非主线程调用和 POSIX/Windows）
-            result_container: list[Any] = [None]
-            exc_container: list[BaseException | None] = [None]
-            done_event = __import__("threading").Event()
-
-            def _run() -> None:
-                try:
-                    result_container[0] = handler(payload)
-                except Exception as e:
-                    exc_container[0] = e
-                finally:
-                    done_event.set()
-
-            # 在主线程中直接调用（最常见场景），避免不必要的线程开销
-            # 若 handler 本身是同步的，直接调用即可；只有超时才用 Timer
-            import threading
-            t = threading.Thread(target=_run, daemon=True)
-            t.start()
-            finished = done_event.wait(timeout=self._hook_timeout)
-
-            if not finished:
+            start = time.monotonic()
+            result = handler(payload)
+            elapsed = time.monotonic() - start
+            if elapsed > self._hook_timeout:
                 if self._dev_mode:
                     raise TimeoutError(
                         f"hook handler {handler} timed out (limit={self._hook_timeout:.2f}s)"
                     )
                 logger.warning(
-                    "hook handler %s timed out (limit=%.2fs)", handler, self._hook_timeout
+                    "hook handler %s exceeded timeout: %.3fs > %.3fs",
+                    handler,
+                    elapsed,
+                    self._hook_timeout,
                 )
-                if breaker:
-                    breaker.record_failure()
-                return None
-
-            if exc_container[0] is not None:
-                if self._dev_mode:
-                    raise exc_container[0]
-                logger.exception("hook handler %s failed: %s", handler, exc_container[0])  # type: ignore[arg-type]
                 if breaker:
                     breaker.record_failure()
                 return None
 
             if breaker:
                 breaker.record_success()
-            return result_container[0]
+            return result
 
         except TimeoutError:
             if self._dev_mode:

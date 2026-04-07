@@ -12,6 +12,7 @@ test_events_qt.py for headless-safe separation.
 """
 
 import time
+import threading
 import pytest
 
 from flow_hud.core.hooks import (
@@ -136,6 +137,29 @@ class TestHudHookManagerRegistration:
         payload = AfterTransitionPayload(old_state="ghost", new_state="pulse")
         mgr.call("on_after_state_transition", payload)
         assert results == []
+        assert mgr._breakers == {}
+
+    def test_register_is_idempotent_for_same_implementor(self):
+        mgr = make_manager()
+        calls = []
+
+        class MyPlugin:
+            name = "my-plugin"
+
+            def on_after_state_transition(self, payload):
+                calls.append("called")
+
+        plugin = MyPlugin()
+        mgr.register(plugin)
+        mgr.register(plugin)
+
+        payload = AfterTransitionPayload(old_state="ghost", new_state="pulse")
+        mgr.call("on_after_state_transition", payload)
+        assert calls == ["called"]
+
+        mgr.unregister(plugin)
+        mgr.call("on_after_state_transition", payload)
+        assert calls == ["called"]
 
 
 # ---------------------------------------------------------------------------
@@ -367,3 +391,47 @@ class TestUnknownHookName:
         mgr = make_manager()
         result = mgr.call("non_existent_hook", None)
         assert result is None
+
+
+class TestUiSafeExecutionPolicy:
+    def test_handler_runs_in_caller_thread(self):
+        mgr = make_manager()
+        caller_thread = threading.get_ident()
+        handler_threads: list[int] = []
+
+        class ProbePlugin:
+            name = "probe"
+
+            def on_after_state_transition(self, payload):
+                handler_threads.append(threading.get_ident())
+
+        mgr.register(ProbePlugin())
+        mgr.call("on_after_state_transition", AfterTransitionPayload(old_state="ghost", new_state="pulse"))
+
+        assert handler_threads == [caller_thread]
+
+    def test_timeout_still_counts_as_failure_and_keeps_isolation(self):
+        mgr = make_manager(hook_timeout=0.01, failure_threshold=1, recovery_timeout=60.0)
+        good_calls: list[str] = []
+
+        class SlowPlugin:
+            name = "slow"
+
+            def on_after_state_transition(self, payload):
+                time.sleep(0.02)
+
+        class GoodPlugin:
+            name = "good"
+
+            def on_after_state_transition(self, payload):
+                good_calls.append("ok")
+
+        mgr.register(SlowPlugin())
+        mgr.register(GoodPlugin())
+
+        payload = AfterTransitionPayload(old_state="ghost", new_state="pulse")
+        mgr.call("on_after_state_transition", payload)
+        mgr.call("on_after_state_transition", payload)
+
+        # slow 插件超时后被熔断，但 good 插件持续执行
+        assert len(good_calls) == 2

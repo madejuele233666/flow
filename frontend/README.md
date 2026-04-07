@@ -45,6 +45,20 @@ IPC client runtime tuning precedence:
 2. `[ipc_client]` defaults in `hud_config.toml`
 3. built-in plugin defaults
 
+## HUD Plugin Hook Safety
+
+UI-facing HUD hooks (`before_widget_register`, transition lifecycle hooks) execute on the HUD runtime thread.
+
+Do:
+- Keep hook handlers short and deterministic.
+- Return quickly; move long-running work to background event paths or plugin-managed workers.
+- Treat hook payloads as the canonical mutation boundary (`before_widget_register` can rewrite slot only).
+
+Don't:
+- Block in hook handlers with long network/disk operations.
+- Assume hook handlers run in worker threads.
+- Mutate Qt widgets from non-HUD threads.
+
 ## Test
 
 ```bash

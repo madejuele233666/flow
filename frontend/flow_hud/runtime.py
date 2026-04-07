@@ -73,29 +73,52 @@ def create_hud_app(
     hud_config = config or HudConfig.load()
     hud_app = HudApp(config=hud_config, discover_plugins=discover_plugins)
     setup_runtime_plugins(hud_app, runtime_plugin_specs(runtime_profile))
-
     return hud_app
 
 
 def setup_runtime_plugins(hud_app, plugin_specs: Iterable[RuntimePluginSpec]) -> None:
-    for spec in plugin_specs:
-        plugin_class = spec.load_plugin_class()
-        plugin_name = plugin_class.manifest.name
-        if hud_app.plugins.get(plugin_name) is not None:
-            logger.info("Runtime profile plugin %r already registered, skipping explicit setup", plugin_name)
-            continue
-
-        plugin = plugin_class()
-        if not hud_app.plugins.register(plugin):
-            continue
-        target_ctx = hud_app.admin_context if spec.admin else hud_app.plugin_context
-        plugin.setup(target_ctx)
+    """Delegate all setup to app-level single lifecycle authority."""
+    if not hasattr(hud_app, "setup_plugins"):
+        raise TypeError("hud_app must provide setup_plugins(plugin_specs)")
+    hud_app.setup_plugins(plugin_specs)
 
 
-def _mount_canvas_widgets(canvas, widget_items: Iterable[tuple[str, object]]) -> None:
-    for name, widget in widget_items:
-        canvas.mount_widget(name, widget)
-        logger.info("Mounted widget: %r -> canvas", name)
+def _mount_canvas_widgets(canvas, widget_items: Iterable[tuple[str, object, str]]) -> None:
+    for name, widget, slot in widget_items:
+        canvas.mount_widget(name, widget, slot=slot)
+        logger.info("Mounted widget: %r -> %s", name, slot)
+
+
+def _wire_canvas_runtime(hud_app: "HudApp", canvas) -> None:
+    from flow_hud.core.events import HudEventType
+
+    def _on_widget_registered(event) -> None:
+        payload = event.payload
+        if payload is None:
+            return
+        name = getattr(payload, "name", None)
+        if not isinstance(name, str):
+            return
+
+        mount = hud_app.get_widget_mount(name)
+        if mount is None:
+            canvas.unmount_widget(name)
+            return
+
+        widget, slot = mount
+        canvas.mount_widget(name, widget, slot=slot)
+
+    def _on_widget_unregistered(event) -> None:
+        payload = event.payload
+        if payload is None:
+            return
+        name = getattr(payload, "name", None)
+        if not isinstance(name, str):
+            return
+        canvas.unmount_widget(name)
+
+    hud_app.event_bus.subscribe(HudEventType.WIDGET_REGISTERED, _on_widget_registered)
+    hud_app.event_bus.subscribe(HudEventType.WIDGET_UNREGISTERED, _on_widget_unregistered)
 
 
 def run_hud(
@@ -125,7 +148,8 @@ def run_hud(
             discover_plugins=discover_plugins,
         )
         canvas = HudCanvas()
-        _mount_canvas_widgets(canvas, hud_app.plugin_context.get_widgets().items())
+        _wire_canvas_runtime(hud_app, canvas)
+        _mount_canvas_widgets(canvas, hud_app.list_widget_mounts())
 
         canvas.resize(400, 100)
         canvas.move(100, 50)
