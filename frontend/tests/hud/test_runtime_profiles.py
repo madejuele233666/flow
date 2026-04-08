@@ -92,8 +92,6 @@ def test_registry_discover_reports_only_successfully_registered_plugins(monkeypa
 
 
 def test_create_hud_app_validates_profile_before_constructing_app(monkeypatch):
-    import flow_hud.core.app as app_module
-
     constructed = {"count": 0}
 
     class _FakeHudApp:
@@ -103,7 +101,7 @@ def test_create_hud_app_validates_profile_before_constructing_app(monkeypatch):
         def shutdown(self):
             return None
 
-    monkeypatch.setattr(app_module, "HudApp", _FakeHudApp)
+    monkeypatch.setattr(runtime_module, "_load_hud_app_class", lambda: _FakeHudApp)
 
     with pytest.raises(ValueError, match="unknown runtime profile"):
         runtime_module.create_hud_app(
@@ -116,8 +114,6 @@ def test_create_hud_app_validates_profile_before_constructing_app(monkeypatch):
 
 
 def test_create_hud_app_shuts_down_on_setup_failure(monkeypatch):
-    import flow_hud.core.app as app_module
-
     state = {"shutdown_called": 0}
 
     class _FakeHudApp:
@@ -130,7 +126,7 @@ def test_create_hud_app_shuts_down_on_setup_failure(monkeypatch):
     def _boom(hud_app, plugin_specs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(app_module, "HudApp", _FakeHudApp)
+    monkeypatch.setattr(runtime_module, "_load_hud_app_class", lambda: _FakeHudApp)
     monkeypatch.setattr(runtime_module, "setup_runtime_plugins", _boom)
 
     with pytest.raises(RuntimeError, match="boom"):

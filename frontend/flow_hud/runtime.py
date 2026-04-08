@@ -61,17 +61,23 @@ def runtime_plugin_specs(runtime_profile: str) -> tuple[RuntimePluginSpec, ...]:
         raise ValueError(f"unknown runtime profile: {runtime_profile}") from exc
 
 
+def _load_hud_app_class():
+    from flow_hud.core.app import HudApp
+
+    return HudApp
+
+
 def create_hud_app(
     *,
     runtime_profile: str,
     config: "HudConfig | None" = None,
     discover_plugins: bool = True,
 ) -> "HudApp":
-    from flow_hud.core.app import HudApp
     from flow_hud.core.config import HudConfig
 
-    hud_config = config or HudConfig.load()
     plugin_specs = runtime_plugin_specs(runtime_profile)
+    hud_config = config or HudConfig.load()
+    HudApp = _load_hud_app_class()
     hud_app = HudApp(config=hud_config, discover_plugins=discover_plugins)
     try:
         setup_runtime_plugins(hud_app, plugin_specs)
