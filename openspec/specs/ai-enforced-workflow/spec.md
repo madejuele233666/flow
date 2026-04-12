@@ -1,6 +1,6 @@
 ## Purpose
 
-Define a general AI-enforced OpenSpec workflow that combines artifact contracts, phase gates, risk tiers, and skill orchestration.
+Define a general AI-enforced OpenSpec workflow that combines artifact contracts, phase gates, risk tiers, shared verification sequencing, optional repository-index cache support, and skill orchestration.
 
 ## Requirements
 
@@ -34,7 +34,7 @@ The workflow SHALL classify changes into `LIGHT`, `STANDARD`, or `STRICT` risk l
 
 ### Requirement: Workflow SHALL define phase gates
 
-The workflow SHALL define explicit gates between artifact creation, implementation, verification, sync, and archive. For risk tiers that require independent review, those phase gates SHALL include the corresponding independent verification step. A failed gate MUST redirect the change to the appropriate correction phase rather than allowing silent progression.
+The workflow SHALL define explicit gates between artifact creation, implementation, verification, sync, and archive. For risk tiers that require independent review, those phase gates SHALL include the corresponding independent verification step. A failed gate MUST redirect the change to the appropriate correction phase rather than allowing silent progression. Repository-index cache support, when used, MUST remain advisory and MUST NOT become an implementation-review gate.
 
 #### Scenario: Artifact review fails before implementation
 - **WHEN** artifact verification finds a blocking issue
@@ -46,15 +46,15 @@ The workflow SHALL define explicit gates between artifact creation, implementati
 
 ### Requirement: Workflow SHALL require independent verification orchestration for governed gates
 
-For risk tiers that require independent verification, the workflow SHALL treat the related OpenSpec verify and repair skills as the mandatory orchestration path for invoking and consuming independent verifier output. The workflow SHALL define Gemini CLI as the default independent verifier command contract while allowing equivalent future implementations.
+For risk tiers that require independent verification, the workflow SHALL treat the related OpenSpec verify and repair skills as the mandatory orchestration path for invoking and consuming independent verifier output. The workflow SHALL define `verify-sequence/default` as the shared verification sequence, treat `.codex/agents/verify-reviewer.toml` as the read-only verifier subagent contract, and treat `index-sequence/default` as optional repository-index cache support only. Gemini MAY be used as a secondary verifier only when policy explicitly enables it.
 
 #### Scenario: Mandatory independent verifier gate is planned
 - **WHEN** a `STANDARD` or `STRICT` change defines a required independent verifier gate
-- **THEN** the workflow SHALL require design/tasks to name verifier source, invocation mode, output format, report path, fallback behavior, and the responsible skill entry point
+- **THEN** the workflow SHALL require design/tasks to name verifier source, invocation mode, output format, report path, fallback behavior, cache-helper behavior when used, and the responsible skill entry point
 
 #### Scenario: Independent verification output is generated
 - **WHEN** independent verification is executed for a required gate
-- **THEN** the workflow SHALL require machine-consumable findings output that can be routed into repair and re-verification instead of ad hoc standalone reviewer notes
+- **THEN** the workflow SHALL require machine-consumable findings output that can be routed into repair and re-verification instead of ad hoc standalone reviewer notes, and SHALL treat same-session implementation reruns as convergence-only
 
 ### Requirement: Workflow SHALL enforce anti-abstraction guardrails
 

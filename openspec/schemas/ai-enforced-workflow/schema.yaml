@@ -1,6 +1,6 @@
 name: ai-enforced-workflow
-version: 5
-description: Spec-driven workflow with risk tiers, anti-abstraction guardrails, verifier-subagent-first review, and Gemini second-opinion verification/repair loops
+version: 7
+description: Spec-driven workflow with artifact review, source-first implementation review, optional repository-index cache support, reusable working reviewer sessions, and challenger-pass closure
 artifacts:
   - id: proposal
     generates: proposal.md
@@ -12,27 +12,13 @@ artifacts:
 
       Sections:
 
-      - **Why**: 1-2 sentences on the problem or opportunity. What problem does
-      this solve? Why now?
-
-      - **What Changes**: Bullet list of changes. Be specific about new
-      capabilities, modifications, removals, and workflow or skill impacts.
-      Mark breaking changes with **BREAKING**.
-
-      - **Capabilities**: Identify which specs will be created or modified:
-        - **New Capabilities**: List capabilities being introduced. Each becomes
-          a new `specs/<name>/spec.md`. Use kebab-case names.
-        - **Modified Capabilities**: List existing capabilities whose
-          REQUIREMENTS are changing. Only include if spec-level behavior changes.
-
-      - **Risk Tier**: Classify the change as `LIGHT`, `STANDARD`, or `STRICT`.
-        Justify the tier using concrete triggers such as scope, public
-        interfaces, migrations, concurrency/state complexity, or reference
-        alignment.
-
-      - **Impact**: Affected code, APIs, dependencies, systems, and which skills
-        are expected to participate (for example `openspec-align`,
-        `openspec-architect`, `openspec-artifact-verify`).
+      - **Why**: 1-2 sentences on the problem or opportunity.
+      - **What Changes**: Bullet list of concrete capability, workflow, skill,
+        or contract changes.
+      - **Capabilities**: Identify which specs will be created or modified.
+      - **Risk Tier**: Classify the change as `LIGHT`, `STANDARD`, or `STRICT`
+        using concrete triggers.
+      - **Impact**: Affected code, APIs, dependencies, systems, and skills.
 
 
       IMPORTANT:
@@ -42,10 +28,6 @@ artifacts:
         must be.
       - Do not use abstract labels like "improve architecture" without naming
         concrete capabilities or artifacts that will change.
-
-
-      Keep it concise. Focus on the "why" and the change boundary; implementation
-      details belong in design.md.
     requires: []
 
   - id: specs
@@ -59,24 +41,22 @@ artifacts:
       Create one spec file per capability listed in the proposal's Capabilities
       section.
 
-      - New capabilities: use the exact kebab-case name from the proposal
+      - New capabilities: use the exact kebab-case name from the proposal.
       - Modified capabilities: use the existing spec folder name from
-        `openspec/specs/<capability>/`
+        `openspec/specs/<capability>/`.
 
 
       Delta operations (use `##` headers):
 
-      - **ADDED Requirements**: New capabilities
-      - **MODIFIED Requirements**: Changed behavior - MUST include full updated
-        content
-      - **REMOVED Requirements**: Deprecated features - MUST include **Reason**
-        and **Migration**
-      - **RENAMED Requirements**: Name changes only - use FROM:/TO: format
+      - **ADDED Requirements**
+      - **MODIFIED Requirements**
+      - **REMOVED Requirements**
+      - **RENAMED Requirements**
 
 
       Format requirements:
 
-      - Each requirement: `### Requirement: <name>` followed by description
+      - Each requirement: `### Requirement: <name>`
       - Use SHALL/MUST for normative requirements
       - Each scenario: `#### Scenario: <name>` with WHEN/THEN format
       - Every requirement MUST have at least one scenario
@@ -84,10 +64,6 @@ artifacts:
 
       For workflow and architecture-related capabilities, requirements MUST be
       testable as document or process checks, not only as code behavior.
-
-
-      If the proposal classifies the change as `STRICT`, ensure the specs are
-      precise enough to support artifact verification and repair routing.
     requires:
       - proposal
 
@@ -120,94 +96,96 @@ artifacts:
 
       Each key Decision MUST include:
 
-      - The problem being solved
-      - Alternatives considered
-      - Why this option was chosen
-      - At least one verification hook
+      - the problem being solved
+      - alternatives considered
+      - why this option was chosen
+      - at least one verification hook
 
 
       ANTI-ABSTRACTION GUARDRAILS:
 
-      Do not stop at high-level concepts. For each important mechanism or
-      boundary, provide the level of detail required by the risk tier:
+      For each important mechanism or boundary, provide:
 
-      - **Stack Equivalent**: What is the concrete construct in this project or
-        stack? (interface, schema, DTO, trait, manifest, state table, etc.)
-      - **Named Deliverables**: Name the concrete deliverables, not only the
-        mechanism.
-      - **Failure Semantics**: Define failure, retry, fallback, veto, rejection,
-        or recovery behavior where relevant.
-      - **Boundary Examples**: Give at least one concrete example of caller,
-        payload, forbidden leak, and returned form for each critical boundary.
-      - **Contrast Structure**: Show current vs target, option A vs option B,
-        replicate vs adapt, or allow vs forbid where a trade-off matters.
-      - **Verification Hook**: State how the claim will later be verified.
+      - **Stack Equivalent**
+      - **Named Deliverables**
+      - **Failure Semantics**
+      - **Boundary Examples**
+      - **Contrast Structure**
+      - **Verification Hook**
 
 
       SKILL ORCHESTRATION:
 
-      - If the change references, aligns with, or replicates an existing system,
-        use `openspec-align` before finalizing design decisions.
-      - Use `openspec-architect` for architectural comparisons, stack
-        equivalents, and decision framing.
+      - If the change references, aligns with, or replicates an existing
+        system, use `openspec-align` before finalizing design decisions.
+      - Use `openspec-architect` for architectural comparisons and stack
+        equivalents.
       - All verification stages MUST use the shared sequence
-        `verify-sequence/default` defined in
+        `verify-sequence/default` from
         `openspec/schemas/ai-enforced-workflow/verification-sequence.md`.
-      - The shared sequence policy applies to any `ai-enforced-workflow` change
-        regardless of project domain.
-      - `STANDARD` and `STRICT` changes MUST describe two-stage verification:
-        read-only verifier subagent (`verify-reviewer`) review first, then
-        Gemini second opinion only when policy requires it.
+      - Repository-index support uses `index-sequence/default` only as optional
+        cache discovery or refresh, never as a Stage 0 gate.
       - `openspec-artifact-verify` and `openspec-verify-change` MUST stay thin
-        and delegate orchestration to the shared sequence instead of restating
-        the flow.
+        and delegate orchestration to the shared sequence.
       - Human-only confirmation does not satisfy a verification gate.
-      - If the risk tier is `STRICT`, design.md MUST be reviewable by
-        `openspec-artifact-verify` without requiring unstated assumptions.
 
 
       INDEPENDENT VERIFIER PLAN (required for `STANDARD` and `STRICT`):
 
       For each independent verification step, design.md MUST document:
 
-      - Sequence reference:
+      - sequence reference:
         `openspec/schemas/ai-enforced-workflow/verification-sequence.md#verify-sequence/default`
-      - Verifier agent path:
-        `.codex/agents/verify-reviewer.toml` (read-only, normalized JSON only)
-      - Verifier invocation method:
-        built-in subagent API path in the main process (shell-based codex
-        invocation is fallback-only)
-      - Verifier invocation template:
-        `verify-reviewer-inline-v1` from shared sequence, including parameter
-        mapping for bundle fields and output/report paths
-      - Verifier runtime profile source:
+      - cache-helper reference:
+        `openspec/schemas/ai-enforced-workflow/index-sequence.md#index-sequence/default`
+      - verifier agent path:
         `.codex/agents/verify-reviewer.toml`
-      - Minimal verification bundle fields (defined once and reused):
-        `change / mode / risk_tier / evidence_paths_or_diff_scope / findings_contract / retry_policy`
-      - Stateless verify/fix loop semantics:
-        each verification rerun uses a fresh verifier instance with no inherited
-        verifier memory
-      - Supported continuation overrides:
-        `verify-only`, `dry-run`, `manual_pause` only
-      - Gemini policy: mandatory only for `STRICT` or explicitly dual-gated
-        checkpoints
-      - Runner contract ID (`gemini-capture`), prompt inputs, raw report path,
-        `report_path`, maximum attempts, JSON-response requirement, and
-        command-resolution evidence path
-      - Fallback behavior (retry once, attempt raw-envelope normalization into
-        `report_path`, then block if recovery also fails)
-      - Skill entry point that invokes/consumes the step
-        (`openspec-artifact-verify`, `openspec-verify-change`,
-        `openspec-repair-change`)
+      - index-maintainer agent path:
+        `.codex/agents/index-maintainer.toml`
+      - index skill entry points:
+        `openspec-index-preflight` and `openspec-index-maintain`
+      - verifier invocation method:
+        built-in subagent API in the main process
+      - agent spawn decision contract:
+        `agent-spawn-decision-v1`
+      - verifier invocation template:
+        `verify-reviewer-inline-v2`
+      - minimal verification bundle fields:
+        `change / mode / review_phase / review_pass_type / risk_tier /
+        evidence_paths_or_diff_scope / findings_contract`
+      - optional cache handoff fields:
+        `index_context.contract / index_context.manifest_path /
+        index_context.manifest_present / index_context.preflight_report_path /
+        index_context.cache_mode / index_context.fallback_policy`
+      - output-path fields:
+        `output_paths.findings_path / output_paths.verifier_evidence_path /
+        output_paths.gemini_raw_path? / output_paths.gemini_report_path? /
+        output_paths.spawn_decision_path?`
+      - execution evidence fields:
+        `review_phase / review_pass_type / cache_mode / closure_authority /
+        verifier_output_path / reviewed_paths / skipped_paths / reviewed_axes /
+        unreviewed_axes / coverage_status / saturation_status /
+        early_stop_reason? / skip_reasons?`
+      - implementation-only inline evidence:
+        `review_scope / review_coverage`
+      - session semantics:
+        artifact review may block implementation entry;
+        implementation reruns stay in the working session;
+        challenger is the only implementation closure authority
+      - Gemini policy:
+        optional only when repository or checkpoint policy explicitly enables
+        dual review; not a default Stage A gate
+      - runner contract details when Gemini is used:
+        `gemini-capture`, raw report path, normalized report path, recovery
+        semantics, and command-resolution evidence
 
 
       REVIEW GATE:
 
-      Before finalizing design.md, include enough structure for verifier-subagent
-      review and tier-gated Gemini second opinion through
-      `verify-sequence/default` to check
-      Completeness, Correctness, and Coherence. Missing guardrails that affect
-      a `STRICT` change are blocking.
+      Before finalizing design.md, include enough structure for artifact review,
+      implementation review, inline implementation scope/coverage, and
+      challenger-pass closure through `verify-sequence/default`. Missing
+      guardrails that affect a `STRICT` change are blocking.
     requires:
       - proposal
 
@@ -229,38 +207,34 @@ artifacts:
 
       REQUIRED TASK PROPERTIES:
 
-      - Tasks MUST name concrete outputs (files, schemas, skills, templates,
-        reports, commands, tests)
+      - Tasks MUST name concrete outputs
       - Tasks MUST include verification work, not only implementation work
-      - Tasks for workflow or skill behavior MUST mention how the behavior will
-        be exercised or audited
-      - For each independent verification step in `STANDARD` or `STRICT`
-        changes, tasks MUST reference shared sequence
+      - Tasks for workflow behavior MUST mention how the behavior will be
+        exercised or audited
+      - Verification tasks in `STANDARD` or `STRICT` changes MUST reference
         `verify-sequence/default`, name the minimal verification bundle fields,
-        name verifier output/report paths, define routing target and retry
-        policy, and require fresh verifier instances for each rerun without
-        duplicating shell-specific command bodies
+        name optional cache-helper fields, name verifier output/report paths,
+        define routing target and caller-local guardrails, and require
+        execution evidence with:
+        `review_phase / review_pass_type / cache_mode / closure_authority /
+        verifier_output_path / reviewed_paths / skipped_paths / reviewed_axes /
+        unreviewed_axes / coverage_status / saturation_status /
+        early_stop_reason? / skip_reasons?`
+      - Implementation verification tasks MUST also require inline
+        `review_scope` and `review_coverage`
+      - Tasks MUST state that same-session implementation reruns are for
+        convergence and challenger is the only implementation closure step
+      - Tasks MUST NOT introduce a standalone planner file, planner schema, or
+        planner agent as a prerequisite for implementation review
 
 
       RISK-TIER GATING:
 
-      - `LIGHT`: verifier-subagent review and optional Gemini second opinion
-        unless dual-gated
-      - `STANDARD`: include explicit verifier-subagent review, shared
-        sequence planning, and tier-gated implementation second-opinion
-        verification before sync/archive
-      - `STRICT`: include explicit verifier-subagent review, mandatory
-        Gemini second-opinion checkpoints for artifact and implementation
-        verification, repair-loop rerun coverage, and exercise tasks
-
-
-      ANTI-ABSTRACTION RULES:
-
-      - Avoid abstract tasks like "improve architecture" or "set up mechanism"
-      - Prefer named deliverables such as "Define findings output fields in
-        skill X" or "Update schema instruction to require boundary examples"
-      - If a task creates a critical design rule, also add the task that proves
-        the rule can be checked
+      - `LIGHT`: verifier-subagent review
+      - `STANDARD`: explicit artifact review plus implementation working and
+        challenger review
+      - `STRICT`: same as `STANDARD`, plus explicit exercises and, only when
+        repository policy opts in, Gemini dual-review checkpoints
 
 
       CHECKPOINTS:
@@ -269,31 +243,31 @@ artifacts:
       repair routing MUST end with a checkpoint task in this exact format:
 
       - [ ] X.Y [Checkpoint] Run verifier-subagent review using
-        `verify-sequence/default` for [specific output: schema diff / skill
-        output / exercise log / verification report]. Write authoritative
-        verifier-subagent findings JSON and verifier execution evidence JSON, and run
-        Gemini second opinion when required by risk tier or
-        explicit dual gate through logical runner contract `gemini-capture`.
-        Use verifier invocation template `verify-reviewer-inline-v1` from the shared
-        sequence for built-in invocation organization.
-        MUST write both the raw Gemini envelope and normalized JSON report when
-        Gemini runs. If primary Gemini execution fails after writing raw, use
-        the contract recovery step (`input_raw_path` -> `report_path`) before
-        blocking. Document originating phase using canonical values
-        `artifact_gate`, `apply`, or `implementation_verify`, plus the expected
-        continuation target on pass. Only `verify-only`, `dry-run`, and
-        `manual_pause` may override automatic continuation. Each rerun MUST use
-        a fresh verifier instance (no inherited
-        memory). Record active resolved command in execution evidence, not task
-        policy prose.
+        `verify-sequence/default` for [specific output]. Use repository-index
+        cache helper `index-sequence/default` only when cache discovery or
+        refresh is useful; do not require cache authority before review.
+        Name the minimal verification bundle fields (`change / mode /
+        review_phase / review_pass_type / risk_tier /
+        evidence_paths_or_diff_scope / findings_contract`), optional
+        `index_context` fields (`contract / manifest_path / manifest_present /
+        preflight_report_path / cache_mode / fallback_policy`), required
+        `output_paths` fields (`findings_path / verifier_evidence_path /
+        gemini_raw_path? / gemini_report_path? / spawn_decision_path?`), the
+        routing target, and any caller-local guardrails. Require authoritative
+        verifier findings JSON plus verifier execution evidence JSON. Require
+        implementation checkpoints to include inline `review_scope` and
+        `review_coverage`. State that same-session implementation reruns are
+        convergence-only and challenger is the only implementation closure
+        authority. If the checkpoint explicitly enables Gemini dual review,
+        require logical runner contract `gemini-capture`, raw plus normalized
+        output, and recovery via `input_raw_path -> report_path`.
 
 
       SKILL AWARENESS:
 
       Reference the expected skills when tasks depend on them
       (`openspec-align`, `openspec-architect`, `openspec-artifact-verify`,
-      `openspec-repair-change`, `openspec-verify-change`). Verify-related
-      skills MUST use shared sequence `verify-sequence/default`.
+      `openspec-repair-change`, `openspec-verify-change`).
     requires:
       - specs
       - design
@@ -306,31 +280,34 @@ apply:
     Read context files, work through pending tasks, and mark complete as you go.
 
     For any verification or checkpoint task in `ai-enforced-workflow`:
-    - execute shared sequence `verify-sequence/default` from
-      `openspec/schemas/ai-enforced-workflow/verification-sequence.md`
+    - execute shared sequence `verify-sequence/default`
+    - use repository-index helper `index-sequence/default` only for optional
+      cache discovery or refresh
+    - do not require cache authority before implementation review can start or
+      complete
     - use verifier agent `.codex/agents/verify-reviewer.toml` in read-only mode
       with bundle fields:
-      `change / mode / risk_tier / evidence_paths_or_diff_scope / findings_contract / retry_policy`
-    - invoke verifier through built-in subagent API using template
-      `verify-reviewer-inline-v1`; keep invocation metadata auditable in
-      execution logs/evidence (`agent_id/start_at/end_at/final_state`)
-    - require `findings_contract=shared-findings-v1`; unsupported contract id
-      blocks the checkpoint before verification
-      - malformed or contract-violating verifier-subagent findings output is an immediate
-        blocker; enforce at least `id` uniqueness, stable `id` across consecutive
-        reruns for unchanged unresolved findings, `auto_fixable`/`redirect_layer`
-        constraints, and `SUGGESTION => blocking=false`; Gemini recovery applies
-        only to the Gemini runner (`gemini-capture`) raw/report contract
-      - verification evidence is authoritative only when both verifier-subagent
-        findings JSON and verifier execution evidence JSON exist; hand-written markdown
-        summaries do not satisfy the gate
-      - auto-repair implementation only when
-        `mode=implementation && redirect_layer=implementation && auto_fixable=true`
-    - after any auto-fix attempt, rerun with a fresh verifier instance; stop and
-      route when the same blocking finding (`id` + `redirect_layer`) repeats
-    - use separate retry budgets for artifact reruns and implementation
-      auto-fix loops, as defined by the shared sequence
-    - route blocking non-implementation or blocking non-auto-fixable findings to
-      `openspec-repair-change`; policy-acceptable non-blocking warnings may pass
-      without repair routing
+      `change / mode / review_phase / review_pass_type / risk_tier /
+      evidence_paths_or_diff_scope / findings_contract`
+    - when cache helper runs, pass `index_context`
+      (`contract / manifest_path / manifest_present /
+      preflight_report_path / cache_mode / fallback_policy`)
+    - pass `output_paths`
+      (`findings_path / verifier_evidence_path / gemini_raw_path? /
+      gemini_report_path? / spawn_decision_path?`)
+    - before any new verifier or index-maintainer spawn, write
+      `agent-spawn-decision-v1`
+    - require authoritative verifier findings JSON plus verifier execution
+      evidence JSON
+    - require implementation execution evidence to include inline
+      `review_scope` and `review_coverage`
+    - require implementation closure to come only from a challenger pass
+    - keep same-session implementation reruns in the active working session
+      until challenger entry conditions are met
+    - allow automatic implementation repair only when
+      `mode=implementation && blocking=true &&
+      redirect_layer=implementation && auto_fixable=true`
+    - route blocking non-implementation findings to `openspec-repair-change`
+    - use Gemini only when repository or checkpoint policy explicitly enables
+      dual review
     - do not substitute user confirmation for verification
