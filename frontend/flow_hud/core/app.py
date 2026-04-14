@@ -369,6 +369,47 @@ class HudApp:
         self._ensure_runtime_active("emit_background_event")
         self.event_bus.emit_background(event_type, payload)
 
+    async def request_ipc(self, method: str, **params: Any) -> dict[str, Any]:
+        self._ensure_runtime_active("request_ipc")
+
+        plugin = self.plugins.get("ipc-client")
+        if plugin is None:
+            return {
+                "ok": False,
+                "result": None,
+                "error_code": "ERR_IPC_CLIENT_UNAVAILABLE",
+                "message": "IPC client plugin is not available",
+            }
+
+        request = getattr(plugin, "request", None)
+        if not callable(request):
+            return {
+                "ok": False,
+                "result": None,
+                "error_code": "ERR_IPC_CLIENT_INVALID",
+                "message": "IPC client plugin does not expose request()",
+            }
+
+        try:
+            result = await request(method, **params)
+        except Exception as exc:
+            logger.exception("IPC request failed via runtime gateway")
+            return {
+                "ok": False,
+                "result": None,
+                "error_code": "ERR_IPC_CLIENT_REQUEST_FAILED",
+                "message": str(exc),
+            }
+
+        if isinstance(result, dict):
+            return result
+        return {
+            "ok": False,
+            "result": None,
+            "error_code": "ERR_IPC_CLIENT_INVALID_RESPONSE",
+            "message": f"IPC client returned unsupported response type: {type(result).__name__}",
+        }
+
     def register_hook(self, implementor: object, *, owner: str | None) -> list[str]:
         self._ensure_runtime_active("register_hook")
         self._ensure_runtime_thread("register_hook")

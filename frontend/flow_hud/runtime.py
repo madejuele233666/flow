@@ -8,13 +8,21 @@ from dataclasses import dataclass
 from importlib import import_module
 from typing import TYPE_CHECKING, Iterable
 
+from flow_hud.ui_tokens.runtime import (
+    HUD_WINDOW_INITIAL_X,
+    HUD_WINDOW_INITIAL_Y,
+    HUD_WINDOW_MIN_HEIGHT,
+    HUD_WINDOW_MIN_WIDTH,
+    HUD_WINDOW_TITLE,
+)
+
 if TYPE_CHECKING:
     from flow_hud.core.app import HudApp
     from flow_hud.core.config import HudConfig
 
 logger = logging.getLogger(__name__)
 
-APP_NAME = "Flow HUD V2"
+APP_NAME = HUD_WINDOW_TITLE
 APP_VERSION = "0.2.0"
 
 RUNTIME_DESKTOP = "desktop"
@@ -48,8 +56,8 @@ _RUNTIME_PLUGIN_SPECS: dict[str, tuple[RuntimePluginSpec, ...]] = {
         RuntimePluginSpec("flow_hud.adapters.debug_text_plugin:DebugTextPlugin"),
     ),
     RUNTIME_WINDOWS: (
-        RuntimePluginSpec("flow_hud.adapters.debug_text_plugin:DebugTextPlugin"),
         RuntimePluginSpec("flow_hud.plugins.ipc.plugin:IpcClientPlugin", admin=True),
+        RuntimePluginSpec("flow_hud.task_status.plugin:TaskStatusPlugin"),
     ),
 }
 
@@ -126,6 +134,14 @@ def _wire_canvas_runtime(hud_app: "HudApp", canvas) -> None:
     hud_app.event_bus.subscribe(HudEventType.WIDGET_UNREGISTERED, _on_widget_unregistered)
 
 
+def _initial_canvas_size(canvas) -> tuple[int, int]:
+    size_hint = canvas.sizeHint()
+    min_size_hint = canvas.minimumSizeHint()
+    width = max(HUD_WINDOW_MIN_WIDTH, size_hint.width(), min_size_hint.width())
+    height = max(HUD_WINDOW_MIN_HEIGHT, size_hint.height(), min_size_hint.height())
+    return width, height
+
+
 def run_hud(
     *,
     runtime_profile: str,
@@ -156,8 +172,10 @@ def run_hud(
         _wire_canvas_runtime(hud_app, canvas)
         _mount_canvas_widgets(canvas, hud_app.list_widget_mounts())
 
-        canvas.resize(400, 100)
-        canvas.move(100, 50)
+        width, height = _initial_canvas_size(canvas)
+        canvas.setMinimumSize(width, height)
+        canvas.resize(width, height)
+        canvas.move(HUD_WINDOW_INITIAL_X, HUD_WINDOW_INITIAL_Y)
         canvas.show()
 
         logger.info(

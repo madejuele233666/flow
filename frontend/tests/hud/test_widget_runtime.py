@@ -10,7 +10,8 @@ from flow_hud.adapters.ui_canvas import HudCanvas
 from flow_hud.core.app import HudApp
 from flow_hud.core.config import HudConfig
 from flow_hud.core.service import HudLocalService
-from flow_hud.runtime import _wire_canvas_runtime
+from flow_hud.runtime import _initial_canvas_size, _wire_canvas_runtime
+from flow_hud.task_status.widget import TaskStatusWidget
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 _app = QApplication.instance() or QApplication(sys.argv)
@@ -161,6 +162,30 @@ def test_dynamic_registration_is_mounted_by_canvas_event_pipeline(hud_app):
     assert canvas.mounted_slots()["clock"] == "top_right"
 
 
+def test_center_slot_spans_full_width_in_canvas_grid():
+    canvas = HudCanvas()
+
+    index = canvas._grid.indexOf(canvas._slot_hosts["center"])
+    row, col, row_span, col_span = canvas._grid.getItemPosition(index)
+
+    assert (row, col) == (1, 0)
+    assert (row_span, col_span) == (1, 3)
+
+
+def test_center_slot_widget_expands_to_host_width():
+    canvas = HudCanvas()
+    widget = TaskStatusWidget()
+    canvas.mount_widget("task-status", widget, slot="center")
+    canvas.resize(400, 140)
+    canvas.show()
+    _drain_qt_events()
+
+    host = canvas._slot_hosts["center"]
+
+    assert host.width() >= 300
+    assert widget.width() >= host.width() - 4
+
+
 def test_same_qwidget_reregistration_moves_slot_without_delete(hud_app):
     canvas = HudCanvas()
     _wire_canvas_runtime(hud_app, canvas)
@@ -237,6 +262,19 @@ def test_shutdown_unmounts_canvas_without_manual_event_drain(hud_app):
     hud_app.shutdown()
 
     assert "clock" not in canvas.mounted_names()
+
+
+def test_initial_canvas_size_respects_task_status_content_height():
+    canvas = HudCanvas()
+    widget = TaskStatusWidget()
+    canvas.mount_widget("task-status", widget, slot="center")
+    _drain_qt_events()
+
+    width, height = _initial_canvas_size(canvas)
+
+    assert width >= 400
+    assert height >= 140
+    assert height >= canvas.sizeHint().height()
 
 
 def test_register_widget_rejects_non_runtime_thread_call(hud_app):

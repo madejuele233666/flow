@@ -93,6 +93,8 @@ class HudConfig:
     connection_socket_path: str = ""
 
     # ── IPC 客户端运行时调优（可被 extensions.ipc-client 覆盖） ──
+    ipc_hello_timeout_s: float = IpcClientTuning.hello_timeout_s
+    ipc_request_timeout_cap_s: float = IpcClientTuning.request_timeout_cap_s
     ipc_thread_join_timeout_s: float = IpcClientTuning.thread_join_timeout_s
     ipc_retry_initial_backoff_s: float = IpcClientTuning.retry_initial_backoff_s
     ipc_retry_max_backoff_s: float = IpcClientTuning.retry_max_backoff_s
@@ -167,6 +169,10 @@ class HudConfig:
 
         if "ipc_client" in raw:
             ipc_client = raw["ipc_client"]
+            if "hello_timeout_s" in ipc_client:
+                config.ipc_hello_timeout_s = float(ipc_client["hello_timeout_s"])
+            if "request_timeout_cap_s" in ipc_client:
+                config.ipc_request_timeout_cap_s = float(ipc_client["request_timeout_cap_s"])
             if "thread_join_timeout_s" in ipc_client:
                 config.ipc_thread_join_timeout_s = float(ipc_client["thread_join_timeout_s"])
             if "retry_initial_backoff_s" in ipc_client:

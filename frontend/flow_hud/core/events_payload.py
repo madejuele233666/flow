@@ -61,6 +61,13 @@ class IpcMessageReceivedPayload:
     data: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class IpcConnectionStatusPayload:
+    """IPC 推送连接建立/恢复事件载荷."""
+
+    connected: bool
+
+
 # ---------------------------------------------------------------------------
 # UI 注册事件载荷
 # ---------------------------------------------------------------------------

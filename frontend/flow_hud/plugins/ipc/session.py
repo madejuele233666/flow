@@ -25,6 +25,7 @@ async def negotiate_hello(
     *,
     role: str,
     transport: str,
+    timeout_s: float | None = None,
     capabilities: list[str] | None = None,
     client_name: str = "flow-hud",
     client_version: str = "0.1.0",
@@ -46,7 +47,10 @@ async def negotiate_hello(
     writer.write(req_bytes)
     await writer.drain()
 
-    line = await reader.readline()
+    if timeout_s is None:
+        line = await reader.readline()
+    else:
+        line = await asyncio.wait_for(reader.readline(), timeout=timeout_s)
     if not line:
         raise IpcProtocolError("empty hello response")
 

@@ -12,6 +12,8 @@ DEFAULT_CONNECTION_PORT = 54321
 
 @dataclass(frozen=True)
 class IpcClientTuning:
+    hello_timeout_s: float = 1.0
+    request_timeout_cap_s: float = 1.0
     thread_join_timeout_s: float = 5.0
     retry_initial_backoff_s: float = 0.2
     retry_max_backoff_s: float = 2.0
@@ -31,6 +33,11 @@ def parse_ipc_client_tuning(defaults: dict[str, Any], overrides: dict[str, Any])
     fallback = IpcClientTuning()
 
     return IpcClientTuning(
+        hello_timeout_s=_as_positive_float(merged.get("hello_timeout_s"), fallback.hello_timeout_s),
+        request_timeout_cap_s=_as_positive_float(
+            merged.get("request_timeout_cap_s"),
+            fallback.request_timeout_cap_s,
+        ),
         thread_join_timeout_s=_as_positive_float(merged.get("thread_join_timeout_s"), fallback.thread_join_timeout_s),
         retry_initial_backoff_s=_as_positive_float(
             merged.get("retry_initial_backoff_s"),

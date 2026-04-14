@@ -5,9 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QGridLayout, QMainWindow, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGridLayout, QMainWindow, QSizePolicy, QVBoxLayout, QWidget
 
 from flow_hud.core.widget_slots import VALID_WIDGET_SLOTS
+from flow_hud.ui_tokens.canvas import (
+    CANVAS_GRID_HORIZONTAL_SPACING,
+    CANVAS_GRID_MARGINS,
+    CANVAS_GRID_VERTICAL_SPACING,
+    CANVAS_SLOT_LAYOUT_MARGINS,
+    CANVAS_SLOT_LAYOUT_SPACING,
+)
+from flow_hud.ui_tokens.runtime import HUD_WINDOW_TITLE
 
 
 @dataclass(frozen=True)
@@ -34,36 +42,36 @@ class HudCanvas(QMainWindow):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
-        self.setWindowTitle("Flow HUD V2")
+        self.setWindowTitle(HUD_WINDOW_TITLE)
 
     def _setup_layout(self) -> None:
         self._central = QWidget(self)
         self._central.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
         self._grid = QGridLayout(self._central)
-        self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setHorizontalSpacing(8)
-        self._grid.setVerticalSpacing(8)
+        self._grid.setContentsMargins(*CANVAS_GRID_MARGINS)
+        self._grid.setHorizontalSpacing(CANVAS_GRID_HORIZONTAL_SPACING)
+        self._grid.setVerticalSpacing(CANVAS_GRID_VERTICAL_SPACING)
 
         slot_cells = {
-            "top_left": (0, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop),
-            "top_right": (0, 2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop),
-            "center": (1, 1, Qt.AlignmentFlag.AlignCenter),
-            "bottom_left": (2, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom),
-            "bottom_right": (2, 2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom),
+            "top_left": (0, 0, 1, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop),
+            "top_right": (0, 2, 1, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop),
+            "center": (1, 0, 1, 3, Qt.AlignmentFlag.AlignVCenter),
+            "bottom_left": (2, 0, 1, 1, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom),
+            "bottom_right": (2, 2, 1, 1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom),
         }
 
-        for slot, (row, col, align) in slot_cells.items():
+        for slot, (row, col, row_span, col_span, align) in slot_cells.items():
             host = QWidget(self._central)
             host.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
             layout = QVBoxLayout(host)
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(6)
+            layout.setContentsMargins(*CANVAS_SLOT_LAYOUT_MARGINS)
+            layout.setSpacing(CANVAS_SLOT_LAYOUT_SPACING)
             layout.setAlignment(align)
 
             self._slot_hosts[slot] = host
             self._slot_layouts[slot] = layout
-            self._grid.addWidget(host, row, col, alignment=align)
+            self._grid.addWidget(host, row, col, row_span, col_span, alignment=align)
 
         self._grid.setColumnStretch(0, 1)
         self._grid.setColumnStretch(1, 1)
@@ -90,6 +98,8 @@ class HudCanvas(QMainWindow):
                 self.unmount_widget(name)
 
         host_layout = self._slot_layouts[slot]
+        if slot == "center":
+            widget.setSizePolicy(QSizePolicy.Policy.Expanding, widget.sizePolicy().verticalPolicy())
         widget.setParent(self._slot_hosts[slot])
         host_layout.addWidget(widget)
         self._widgets[name] = _MountedWidget(widget=widget, slot=slot)

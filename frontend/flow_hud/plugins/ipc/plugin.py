@@ -10,6 +10,7 @@ from typing import Any
 
 from flow_hud.adapters.ipc_messages import adapt_ipc_message
 from flow_hud.core.events import HudEventType
+from flow_hud.core.events_payload import IpcConnectionStatusPayload
 from flow_hud.ipc_settings import (
     DEFAULT_CONNECTION_HOST,
     DEFAULT_CONNECTION_PORT,
@@ -57,6 +58,8 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
             "host": str,
             "port": int,
             "socket_path": str,
+            "hello_timeout_s": float,
+            "request_timeout_cap_s": float,
             "thread_join_timeout_s": float,
             "retry_initial_backoff_s": float,
             "retry_max_backoff_s": float,
@@ -79,6 +82,7 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
         self._adapter = SocketTransportAdapter()
         self._limits: HelloLimits | None = None
         self._push_capabilities: set[str] = set()
+        self._push_connected = False
         self._runtime_endpoint_override: dict[str, Any] = {}
         self._tuning = IpcClientTuning()
 
@@ -125,13 +129,17 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
             return self._error(ERR_DAEMON_OFFLINE, f"Cannot connect to daemon: {exc}")
 
         try:
-            hello = await negotiate_hello(
-                reader,
-                writer,
-                role=ROLE_RPC,
-                transport=endpoint.transport,
-                capabilities=list(self._tuning.rpc_capabilities),
-            )
+            try:
+                hello = await negotiate_hello(
+                    reader,
+                    writer,
+                    role=ROLE_RPC,
+                    transport=endpoint.transport,
+                    timeout_s=self._tuning.hello_timeout_s,
+                    capabilities=list(self._tuning.rpc_capabilities),
+                )
+            except TimeoutError:
+                return self._error(ERR_INTERNAL, "Request timeout waiting daemon hello")
             self._limits = hello.limits
             limits = hello.limits
 
@@ -142,8 +150,7 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
             writer.write(raw_request)
             await writer.drain()
 
-            timeout_ms = limits.request_timeout_ms
-            line = await asyncio.wait_for(reader.readline(), timeout=timeout_ms / 1000.0)
+            line = await asyncio.wait_for(reader.readline(), timeout=self._request_timeout_s(limits.request_timeout_ms))
             if not line:
                 return self._error(ERR_IPC_PROTOCOL_MISMATCH, "Empty response from daemon")
             self._enforce_incoming_frame(line, limits.max_frame_bytes)
@@ -211,6 +218,7 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
                     writer,
                     role=ROLE_PUSH,
                     transport=endpoint.transport,
+                    timeout_s=self._tuning.hello_timeout_s,
                     capabilities=list(self._tuning.push_capabilities),
                 )
                 self._limits = hello.limits
@@ -218,6 +226,12 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
                 limits = hello.limits
                 missed_heartbeats = 0
                 backoff = self._tuning.retry_initial_backoff_s
+                if self._ctx:
+                    self._ctx.event_bus.emit_background(
+                        HudEventType.IPC_CONNECTION_ESTABLISHED,
+                        IpcConnectionStatusPayload(connected=True),
+                    )
+                self._push_connected = True
 
                 try:
                     while not self._stop_event.is_set():
@@ -249,10 +263,14 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
                     await writer.wait_closed()
             except asyncio.CancelledError:
                 break
-            except (IpcProtocolError, ValueError) as exc:
+            except (TimeoutError, IpcProtocolError, ValueError) as exc:
+                self._emit_connection_lost()
                 if self._stop_event.is_set():
                     break
-                logger.warning("IPC protocol mismatch: %s", exc)
+                if isinstance(exc, TimeoutError):
+                    logger.warning("IPC hello timeout during listen loop")
+                else:
+                    logger.warning("IPC protocol mismatch: %s", exc)
                 await self._sleep_with_backoff(backoff)
                 backoff = min(
                     backoff * self._tuning.retry_backoff_multiplier
@@ -260,6 +278,7 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
                     max_backoff,
                 )
             except OSError:
+                self._emit_connection_lost()
                 if not self._stop_event.is_set():
                     logger.warning("Daemon offline, retrying in %.1fs...", backoff)
                     await self._sleep_with_backoff(backoff)
@@ -269,6 +288,7 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
                         max_backoff,
                     )
             except Exception:
+                self._emit_connection_lost()
                 if self._stop_event.is_set():
                     break
                 logger.exception("Error in listen loop, retrying...")
@@ -353,6 +373,24 @@ class IpcClientPlugin(HudPlugin, IpcClientProtocol):
 
     def _error(self, code: str, message: str) -> dict[str, Any]:
         return {"ok": False, "result": None, "error_code": code, "message": message}
+
+    def _emit_connection_lost(self) -> None:
+        if not self._push_connected:
+            return
+        self._push_connected = False
+        if self._stop_event.is_set():
+            return
+        if self._ctx:
+            self._ctx.event_bus.emit_background(
+                HudEventType.IPC_CONNECTION_LOST,
+                IpcConnectionStatusPayload(connected=False),
+            )
+
+    def _request_timeout_s(self, negotiated_timeout_ms: int) -> float:
+        negotiated_timeout_s = negotiated_timeout_ms / 1000.0
+        if negotiated_timeout_s <= 0:
+            return self._tuning.request_timeout_cap_s
+        return min(negotiated_timeout_s, self._tuning.request_timeout_cap_s)
 
     def _enforce_outgoing_frame(self, data: bytes, max_frame_bytes: int) -> None:
         if len(data) > max_frame_bytes:

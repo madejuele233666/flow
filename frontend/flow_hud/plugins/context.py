@@ -32,6 +32,7 @@ class HudRuntimeGateway(Protocol):
     def unsubscribe_event(self, event_type: Any, handler: Callable, *, owner: str | None) -> None: ...
     def emit_event(self, event_type: Any, payload: Any = None) -> None: ...
     def emit_background_event(self, event_type: Any, payload: Any = None) -> None: ...
+    async def request_ipc(self, method: str, **params: Any) -> dict[str, Any]: ...
 
     def register_hook(self, implementor: object, *, owner: str | None) -> list[str]: ...
     def unregister_hook(self, implementor: object, *, owner: str | None) -> None: ...
@@ -66,6 +67,7 @@ class HudPluginContext(Protocol):
     def get_extension_config(self, plugin_name: str) -> dict[str, Any]: ...
     def get_connection_config(self) -> dict[str, Any]: ...
     def get_ipc_client_config(self) -> dict[str, Any]: ...
+    async def request_ipc(self, method: str, **params: Any) -> dict[str, Any]: ...
 
     @property
     def data_dir(self) -> Path: ...
@@ -90,6 +92,7 @@ class _PluginRuntimeGatewayFacade:
         "_unsubscribe_event",
         "_emit_event",
         "_emit_background_event",
+        "_request_ipc",
         "_register_hook",
         "_unregister_hook",
         "_register_widget",
@@ -100,6 +103,7 @@ class _PluginRuntimeGatewayFacade:
         self._unsubscribe_event = runtime.unsubscribe_event
         self._emit_event = runtime.emit_event
         self._emit_background_event = runtime.emit_background_event
+        self._request_ipc = runtime.request_ipc
         self._register_hook = runtime.register_hook
         self._unregister_hook = runtime.unregister_hook
         self._register_widget = runtime.register_widget
@@ -117,6 +121,9 @@ class _PluginRuntimeGatewayFacade:
     def emit_background_event(self, event_type: Any, payload: Any = None) -> None:
         self._ensure_plugin_event_allowed(event_type)
         self._emit_background_event(event_type, payload)
+
+    async def request_ipc(self, method: str, **params: Any) -> dict[str, Any]:
+        return await self._request_ipc(method, **params)
 
     def register_hook(self, implementor: object, *, owner: str | None) -> list[str]:
         return self._register_hook(implementor, owner=owner)
@@ -254,6 +261,8 @@ class _HudPluginContextImpl:
 
     def get_ipc_client_config(self) -> dict[str, Any]:
         return {
+            "hello_timeout_s": self._config.ipc_hello_timeout_s,
+            "request_timeout_cap_s": self._config.ipc_request_timeout_cap_s,
             "thread_join_timeout_s": self._config.ipc_thread_join_timeout_s,
             "retry_initial_backoff_s": self._config.ipc_retry_initial_backoff_s,
             "retry_max_backoff_s": self._config.ipc_retry_max_backoff_s,
@@ -264,6 +273,9 @@ class _HudPluginContextImpl:
             "rpc_capabilities": list(self._config.ipc_rpc_capabilities),
             "push_capabilities": list(self._config.ipc_push_capabilities),
         }
+
+    async def request_ipc(self, method: str, **params: Any) -> dict[str, Any]:
+        return await self.__runtime_gateway.request_ipc(method, **params)
 
     @property
     def data_dir(self) -> Path:

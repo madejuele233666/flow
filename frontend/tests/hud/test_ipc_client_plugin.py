@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,6 +12,7 @@ import pytest_asyncio
 # Mock PySide6 BEFORE importing anything that might use it
 with patch.dict("sys.modules", {"PySide6": MagicMock(), "PySide6.QtCore": MagicMock()}):
     from flow_hud.core.events import HudEventType
+    from flow_hud.core.events_payload import IpcConnectionStatusPayload
     from flow_hud.plugins.context import HudAdminContext
     from flow_hud.plugins.ipc.protocol import ERR_DAEMON_OFFLINE, ERR_IPC_PROTOCOL_MISMATCH
     from flow_hud.plugins.ipc.plugin import IpcClientPlugin
@@ -59,6 +61,8 @@ class MockDaemon:
         self.hello_protocol_version_override: int | None = None
         self.hello_role_override: str | None = None
         self.hello_transport_override: str | None = None
+        self.respond_to_hello = True
+        self.silent_methods: set[str] = set()
 
     async def start(self) -> MockDaemon:
         if self.transport == "unix":
@@ -97,6 +101,8 @@ class MockDaemon:
                             },
                         }
                     else:
+                        if not self.respond_to_hello:
+                            continue
                         role = req["params"]["role"]
                         self.roles[writer] = role
                         self.hello_count_by_role[role] = self.hello_count_by_role.get(role, 0) + 1
@@ -126,6 +132,8 @@ class MockDaemon:
                     await writer.drain()
                     continue
 
+                if method in self.silent_methods:
+                    continue
                 if method == "bad_type":
                     resp = {"v": 2, "type": "push", "event": "unexpected", "data": {}}
                 elif method == "bad_id":
@@ -186,16 +194,7 @@ def socket_path(tmp_path):
 
 @pytest.fixture
 def plugin(socket_path):
-    p = IpcClientPlugin()
-    mock_ctx = MagicMock(spec=HudAdminContext)
-    mock_ctx.get_extension_config.return_value = {"transport": "unix", "socket_path": socket_path}
-    mock_ctx.get_connection_config.return_value = {
-        "transport": "tcp",
-        "host": "127.0.0.1",
-        "port": 54321,
-        "socket_path": "",
-    }
-    p.setup(mock_ctx)
+    p, mock_ctx = _create_plugin(socket_path)
     yield p, mock_ctx
     p.teardown()
 
@@ -206,6 +205,24 @@ async def daemon(socket_path):
     await d.start()
     yield d
     await d.stop()
+
+
+def _create_plugin(socket_path: str, **extension_config):
+    p = IpcClientPlugin()
+    mock_ctx = MagicMock(spec=HudAdminContext)
+    mock_ctx.get_extension_config.return_value = {
+        "transport": "unix",
+        "socket_path": socket_path,
+        **extension_config,
+    }
+    mock_ctx.get_connection_config.return_value = {
+        "transport": "tcp",
+        "host": "127.0.0.1",
+        "port": 54321,
+        "socket_path": "",
+    }
+    p.setup(mock_ctx)
+    return p, mock_ctx
 
 
 @pytest.mark.asyncio
@@ -237,6 +254,30 @@ async def test_ipc_push_dispatch(plugin, daemon):
 
 
 @pytest.mark.asyncio
+async def test_ipc_push_connect_emits_connection_established(plugin, daemon):
+    _, mock_ctx = plugin
+    await asyncio.sleep(1.2)
+
+    mock_ctx.event_bus.emit_background.assert_any_call(
+        HudEventType.IPC_CONNECTION_ESTABLISHED,
+        IpcConnectionStatusPayload(connected=True),
+    )
+
+
+@pytest.mark.asyncio
+async def test_ipc_push_disconnect_emits_connection_lost(plugin, daemon):
+    _, mock_ctx = plugin
+    await asyncio.sleep(0.3)
+    await daemon.stop()
+    await asyncio.sleep(0.4)
+
+    mock_ctx.event_bus.emit_background.assert_any_call(
+        HudEventType.IPC_CONNECTION_LOST,
+        IpcConnectionStatusPayload(connected=False),
+    )
+
+
+@pytest.mark.asyncio
 async def test_ipc_protocol_mismatch(plugin, daemon):
     p, _ = plugin
     res = await p.request("bad_type")
@@ -260,6 +301,46 @@ async def test_request_timeout_uses_negotiated_limit(plugin, daemon):
     res = await p.request("slow")
     assert res["ok"] is False
     assert "timeout" in res["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_hello_timeout_returns_without_hanging(socket_path):
+    daemon = MockDaemon(socket_path)
+    daemon.respond_to_hello = False
+    await daemon.start()
+
+    plugin, _ = _create_plugin(socket_path, hello_timeout_s=0.05, request_timeout_cap_s=0.2)
+    try:
+        start = time.monotonic()
+        res = await plugin.request("status")
+        elapsed = time.monotonic() - start
+        assert res["ok"] is False
+        assert "timeout" in res["message"].lower()
+        assert "hello" in res["message"].lower()
+        assert elapsed < 0.5
+    finally:
+        plugin.teardown()
+        await daemon.stop()
+
+
+@pytest.mark.asyncio
+async def test_request_timeout_cap_limits_silent_status_response(socket_path):
+    daemon = MockDaemon(socket_path)
+    daemon.request_timeout_ms = 10000
+    daemon.silent_methods.add("status")
+    await daemon.start()
+
+    plugin, _ = _create_plugin(socket_path, hello_timeout_s=0.05, request_timeout_cap_s=0.05)
+    try:
+        start = time.monotonic()
+        res = await plugin.request("status")
+        elapsed = time.monotonic() - start
+        assert res["ok"] is False
+        assert "timeout" in res["message"].lower()
+        assert elapsed < 0.5
+    finally:
+        plugin.teardown()
+        await daemon.stop()
 
 
 @pytest.mark.asyncio

@@ -33,3 +33,16 @@ HUD 所需的 GUI 依赖 MUST 仅在 `frontend/` 工作区中声明；`backend/`
 #### Scenario: frontend 工作区承载 HUD GUI 依赖
 - **WHEN** 检查 `frontend/` 工作区的项目依赖声明
 - **THEN** HUD 运行所需的 GUI 依赖仅在 `frontend/` 工作区中声明
+
+### Requirement: Windows-targeted HUD entry SHALL boot the product runtime while launcher scripts remain orchestration-only
+The Windows-targeted HUD entrypoint MUST start a product runtime that renders the MVP task-status surface by default, and desktop launcher scripts MUST remain limited to sync/bootstrap/start-stop orchestration rather than owning task-status product behavior.
+
+#### Scenario: Windows desktop entry delegates to repo-owned product runtime
+- **WHEN** a contributor inspects the Windows desktop control path and repo entrypoint
+- **THEN** the desktop entry delegates into `python -m flow_hud.windows_main`
+- **AND** the repo-owned Windows runtime profile is responsible for loading the MVP task-status surface
+
+#### Scenario: Launcher does not own task-status business logic
+- **WHEN** backend daemon is offline, no task is active, or task state changes during runtime
+- **THEN** those product semantics are handled inside the HUD runtime/profile/plugin code
+- **AND** the launcher script does not embed task-status rendering, daemon business interpretation, or widget composition logic

@@ -10,6 +10,7 @@ from flow_hud.core.events_payload import IpcMessageReceivedPayload
 class TimerTickPayload:
     """来自引擎的定时器心跳."""
     tick: int
+    task_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -36,7 +37,11 @@ def adapt_ipc_message(method: str, data: dict[str, Any]) -> object:
             tick = data.get("tick")
             if tick is None:
                 tick = data.get("elapsed", 0)
-            return TimerTickPayload(tick=int(tick))
+            task_id = data.get("task_id")
+            return TimerTickPayload(
+                tick=int(tick),
+                task_id=int(task_id) if task_id is not None else None,
+            )
         
         if method == "task.created":
             return TaskCreatedIpcPayload(task_id=data.get("task_id", 0))

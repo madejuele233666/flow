@@ -45,6 +45,9 @@ class HudEventType(str, Enum):
     MOUSE_GLOBAL_MOVE    = "mouse.global_move"      # 全局鼠标坐标更新
     STATE_TRANSITIONED   = "state.transitioned"     # HUD 状态转换完成广播
     IPC_MESSAGE_RECEIVED = "ipc.message_received"   # 来自 Flow Engine 的 IPC 消息
+    IPC_CONNECTION_ESTABLISHED = "ipc.connection_established"  # IPC 推送连接建立/恢复
+    IPC_CONNECTION_LOST  = "ipc.connection_lost"    # IPC 推送连接断开/降级
+    TASK_STATUS_UPDATED  = "task_status.updated"    # 前台任务状态快照更新
     WIDGET_REGISTERED    = "widget.registered"      # UI 插槽注册通知
     WIDGET_UNREGISTERED  = "widget.unregistered"    # UI 插槽卸载通知
 
