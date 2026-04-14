@@ -1,17 +1,37 @@
 # Typed Plugin Sandbox
 
 ## Purpose
-The HUD Plugin Sandbox should be strictly typed using Protocols to ensure IDE assistance, static analysis compatibility, and clear boundaries between plugin logic and core HUD components.
+Define a strictly typed HUD plugin sandbox that exposes canonical runtime capabilities through constrained Protocol boundaries.
 
 ## Requirements
 
 ### Requirement: Typed Plugin Sandbox
-插件上下文（`HudPluginContext` 和 `HudAdminContext`）必须通过强类型 Protocol 暴露组件（EventBus, StateMachine），替代原有的 `Any` 类型。
+`HudPluginContext` and `HudAdminContext` MUST remain Protocol-typed and MUST expose canonical runtime APIs for transition/widget operations through typed boundaries rather than ad hoc direct object mutation.
 
-#### Scenario: IDE Completion for EventBus
-- **WHEN** 在插件中访问 `ctx.event_bus.subscribe`
-- **THEN** 理想情况下应提供方法签名 and 类型提示，且禁止直接修改 `event_bus` 的属性。
+#### Scenario: Typed event and hook boundaries remain enforced
+- **WHEN** 插件访问 `ctx.event_bus` 或 `ctx.register_hook(...)`
+- **THEN** IDE/type checker can resolve typed signatures
+- **AND** plugin cannot mutate host internals through untyped escape hatches.
 
-#### Scenario: Administrative Access via Protocol
-- **WHEN** `HudAdminContext` 的 `state_machine` 被访问
-- **THEN** 它必须返回一个符合 `HudStateMachineProtocol` 的对象，提供有限且安全的交互能力。
+#### Scenario: Typed admin state access stays constrained
+- **WHEN** `HudAdminContext` exposes state metadata
+- **THEN** it is read-only/inspection-only data
+- **AND** context API MUST NOT expose a direct `state_machine.transition(...)` mutation path that bypasses canonical orchestrator.
+
+### Requirement: Context APIs Integrate Canonical Runtime Pipelines
+Context-level state/widget operations MUST bind to host canonical orchestration paths so plugin-facing APIs and service-facing APIs share one runtime truth.
+
+#### Scenario: Plugin widget registration through context
+- **WHEN** 插件调用 context widget registration API
+- **THEN** request enters the same canonical host widget pipeline used by service/runtime
+- **AND** resulting slot and mount behavior matches emitted runtime events.
+
+#### Scenario: Plugin transition request through context
+- **WHEN** 插件触发状态迁移请求（如 admin 插件策略控制）
+- **THEN** request enters canonical transition orchestrator with veto/event lifecycle
+- **AND** result semantics match service boundary behavior.
+
+#### Scenario: Direct transition bypass is rejected
+- **WHEN** 插件尝试通过 context 访问并直接调用状态机转移能力
+- **THEN** sandbox contract MUST reject or not expose that path
+- **AND** transition behavior remains enforceable through canonical orchestrator only.

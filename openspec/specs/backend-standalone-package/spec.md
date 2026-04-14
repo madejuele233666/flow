@@ -26,9 +26,9 @@ The backend workspace MUST continue to expose the existing engine-facing entrypo
 - **AND** backend imports resolve without requiring the frontend workspace
 
 ### Requirement: Backend SHALL own backend-local tests and validation assets
-Backend tests and validation commands MUST be runnable from the `backend/` workspace without depending on frontend test directories.
+Backend tests and validation commands MUST be runnable from the `backend/` workspace without depending on frontend test directories, and MUST include backend-local validation that proves the canonical core task flow for both local direct execution and daemon execution.
 
-#### Scenario: Backend test assets are local to the backend workspace
-- **WHEN** a contributor inspects backend validation assets after migration
-- **THEN** backend tests are stored under `backend/`
-- **AND** backend validation instructions do not require the contributor to enter `frontend/`
+#### Scenario: Backend task-flow validation stays local to backend workspace
+- **WHEN** a contributor validates the backend workspace after this change
+- **THEN** the required validation assets for the canonical core task flow live under `backend/`
+- **AND** the contributor does not need to enter `frontend/` to prove local-mode and daemon-mode task lifecycle closure

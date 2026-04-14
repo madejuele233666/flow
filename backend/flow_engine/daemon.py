@@ -30,15 +30,21 @@ from pathlib import Path
 from typing import Any
 
 from flow_engine.app import FlowApp
+from flow_engine.config import AppConfig, load_config
 from flow_engine.events import EventType
 from flow_engine.ipc.protocol import Push
 from flow_engine.ipc.server import IPCServer
 from flow_engine.state.machine import TaskState
+from flow_engine.task_flow_runtime import TaskFlowRuntime
 
 logger = logging.getLogger(__name__)
 
-# PID 文件路径
-DEFAULT_PID_PATH = Path.home() / ".flow_engine" / "daemon.pid"
+def _pid_path(config: AppConfig) -> Path:
+    return config.paths.data_dir / config.daemon.pid_name
+
+
+def _socket_path(config: AppConfig) -> Path:
+    return config.paths.data_dir / config.daemon.socket_name
 
 
 class FlowDaemon:
@@ -54,6 +60,7 @@ class FlowDaemon:
     def __init__(self, app: FlowApp | None = None) -> None:
         self._app = app or FlowApp()
         self._ipc = IPCServer(
+            socket_path=_socket_path(self._app.config),
             tcp_host=self._app.config.ipc.tcp_host,
             tcp_port=self._app.config.ipc.tcp_port,
             max_frame_bytes=self._app.config.ipc.max_frame_bytes,
@@ -61,9 +68,14 @@ class FlowDaemon:
             heartbeat_interval_ms=self._app.config.ipc.heartbeat_interval_ms,
             heartbeat_miss_threshold=self._app.config.ipc.heartbeat_miss_threshold,
         )
-        self._pid_path = DEFAULT_PID_PATH
+        self._pid_path = _pid_path(self._app.config)
         self._running = False
         self._focus_timer_task: asyncio.Task[None] | None = None
+        self._task_flow = TaskFlowRuntime(
+            self._app,
+            on_task_started=self._handle_task_started,
+            on_task_stopped=self._stop_focus_timer,
+        )
 
         # 注册 IPC 方法
         self._register_methods()
@@ -112,9 +124,10 @@ class FlowDaemon:
             self._pid_path.unlink()
 
     @classmethod
-    def is_running(cls) -> bool:
+    def is_running(cls, config: AppConfig | None = None) -> bool:
         """检查 Daemon 是否在运行."""
-        pid_path = DEFAULT_PID_PATH
+        cfg = config or load_config()
+        pid_path = _pid_path(cfg)
         if not pid_path.exists():
             return False
         try:
@@ -127,9 +140,10 @@ class FlowDaemon:
             return False
 
     @classmethod
-    def stop_running(cls) -> bool:
+    def stop_running(cls, config: AppConfig | None = None) -> bool:
         """向运行中的 Daemon 发送 SIGTERM."""
-        pid_path = DEFAULT_PID_PATH
+        cfg = config or load_config()
+        pid_path = _pid_path(cfg)
         if not pid_path.exists():
             return False
         try:
@@ -139,6 +153,11 @@ class FlowDaemon:
         except (ProcessLookupError, ValueError):
             pid_path.unlink(missing_ok=True)
             return False
+
+    @classmethod
+    def socket_path(cls, config: AppConfig | None = None) -> Path:
+        cfg = config or load_config()
+        return _socket_path(cfg)
 
     # ── 信号处理 ──
 
@@ -178,21 +197,7 @@ class FlowDaemon:
 
     async def _handle_status(self, params: dict[str, Any]) -> dict[str, Any]:
         """查询当前活跃任务与专注时长."""
-        tasks = await self._app.repo.load_all()
-        active = [t for t in tasks if t.state == TaskState.IN_PROGRESS]
-        if not active:
-            return {"active": None, "total_tasks": len(tasks)}
-
-        task = active[0]
-        return {
-            "active": {
-                "id": task.id,
-                "title": task.title,
-                "state": task.state.value,
-                "priority": task.priority,
-            },
-            "total_tasks": len(tasks),
-        }
+        return await self._task_flow.get_status()
 
     async def _handle_task_list(self, params: dict[str, Any]) -> list[dict]:
         """列出任务（支持过滤）."""
@@ -237,136 +242,33 @@ class FlowDaemon:
 
     async def _handle_task_add(self, params: dict[str, Any]) -> dict[str, Any]:
         """添加新任务（支持 ddl/tags/template）."""
-        from datetime import datetime
-        from flow_engine.storage.task_model import Task
-
-        # 模板模式
-        template_name = params.get("template_name")
-        if template_name:
-            tmpl = self._app.templates.get(template_name)
-            if tmpl is None:
-                raise ValueError(f"未找到模板: {template_name}")
-            base_id = await self._app.repo.next_id()
-            ddl_str = params.get("ddl")
-            parsed_ddl = datetime.strptime(ddl_str, "%Y-%m-%d") if ddl_str else None
-            output = tmpl.create(
-                base_id=base_id,
-                title=params.get("title", ""),
-                priority=params.get("priority", 2),
-                ddl=parsed_ddl,
-            )
-            tasks = await self._app.repo.load_all()
-            tasks.extend(output.tasks)
-            await self._app.repo.save_all(tasks)
-            return {
-                "template": template_name,
-                "tasks": [{"id": t.id, "title": t.title, "priority": t.priority} for t in output.tasks],
-            }
-
-        # 普通添加
-        tasks = await self._app.repo.load_all()
-        new_id = max((t.id for t in tasks), default=0) + 1
-        ddl_str = params.get("ddl")
-        task = Task(
-            id=new_id,
+        return await self._task_flow.add_task(
             title=params["title"],
             priority=params.get("priority", 2),
-            ddl=datetime.strptime(ddl_str, "%Y-%m-%d") if ddl_str else None,
+            ddl=params.get("ddl"),
             tags=params.get("tags", []),
+            template_name=params.get("template_name"),
         )
-        tasks.append(task)
-        await self._app.repo.save_all(tasks)
-
-        from flow_engine.events_payload import TaskCreatedPayload
-        await self._app.bus.emit(EventType.TASK_CREATED, TaskCreatedPayload(task_id=task.id))
-        return {"id": task.id, "title": task.title, "priority": task.priority}
 
     async def _handle_task_start(self, params: dict[str, Any]) -> dict[str, Any]:
         """开始执行任务."""
-        from datetime import datetime
-        task_id = params["task_id"]
-        tasks = await self._app.repo.load_all()
-        task = next((t for t in tasks if t.id == task_id), None)
-        if not task:
-            raise ValueError(f"task #{task_id} not found")
-
-        paused = await self._app.engine.ensure_single_active(tasks, task_id)
-        await self._app.engine.transition(task, TaskState.IN_PROGRESS)
-        task.started_at = datetime.now()
-        await self._app.repo.save_all(tasks)
-        self._start_focus_timer(task.id)
-        return {
-            "id": task.id,
-            "title": task.title,
-            "paused": [t.id for t in paused],
-        }
+        return await self._task_flow.start_task(params["task_id"])
 
     async def _handle_task_done(self, params: dict[str, Any]) -> dict[str, Any]:
         """完成当前活跃任务（自动检测）."""
-        tasks = await self._app.repo.load_all()
-        active_tasks = [t for t in tasks if t.state == TaskState.IN_PROGRESS]
-        if not active_tasks:
-            raise ValueError("当前没有进行中的任务")
-        if len(active_tasks) > 1:
-            raise ValueError("存在多个进行中的任务，无法确定当前活跃任务")
-        active = active_tasks[0]
-
-        await self._app.engine.transition(active, TaskState.DONE)
-        await self._app.repo.save_all(tasks)
-        await self._stop_focus_timer()
-        return {"id": active.id, "title": active.title}
+        return await self._task_flow.done_task()
 
     async def _handle_task_pause(self, params: dict[str, Any]) -> dict[str, Any]:
         """暂停当前活跃任务（自动检测）."""
-        tasks = await self._app.repo.load_all()
-        active_tasks = [t for t in tasks if t.state == TaskState.IN_PROGRESS]
-        if not active_tasks:
-            raise ValueError("当前没有进行中的任务")
-        if len(active_tasks) > 1:
-            raise ValueError("存在多个进行中的任务，无法确定当前活跃任务")
-        active = active_tasks[0]
-
-        await self._app.engine.transition(active, TaskState.PAUSED)
-        await self._app.repo.save_all(tasks)
-        await self._stop_focus_timer()
-        return {"id": active.id, "title": active.title}
+        return await self._task_flow.pause_task()
 
     async def _handle_task_resume(self, params: dict[str, Any]) -> dict[str, Any]:
         """恢复任务."""
-        task_id = params["task_id"]
-        tasks = await self._app.repo.load_all()
-        task = next((t for t in tasks if t.id == task_id), None)
-        if not task:
-            raise ValueError(f"task #{task_id} not found")
-
-        if task.state == TaskState.BLOCKED:
-            await self._app.engine.transition(task, TaskState.READY)
-            task.block_reason = ""
-            await self._stop_focus_timer()
-        elif task.state == TaskState.PAUSED:
-            paused = await self._app.engine.ensure_single_active(tasks, task_id)
-            await self._app.engine.transition(task, TaskState.IN_PROGRESS)
-            self._start_focus_timer(task.id)
-        else:
-            raise ValueError(f"task #{task_id} is {task.state.value}, cannot resume")
-
-        await self._app.repo.save_all(tasks)
-        return {"id": task.id, "title": task.title, "state": task.state.value}
+        return await self._task_flow.resume_task(params["task_id"])
 
     async def _handle_task_block(self, params: dict[str, Any]) -> dict[str, Any]:
         """阻塞任务."""
-        task_id = params["task_id"]
-        reason = params.get("reason", "")
-        tasks = await self._app.repo.load_all()
-        task = next((t for t in tasks if t.id == task_id), None)
-        if not task:
-            raise ValueError(f"task #{task_id} not found")
-
-        await self._app.engine.transition(task, TaskState.BLOCKED)
-        task.block_reason = reason
-        await self._app.repo.save_all(tasks)
-        await self._stop_focus_timer()
-        return {"id": task.id, "title": task.title, "reason": reason}
+        return await self._task_flow.block_task(params["task_id"], reason=params.get("reason", ""))
 
     async def _handle_task_breakdown(self, params: dict[str, Any]) -> list[str]:
         """AI 拆解任务."""
@@ -456,6 +358,9 @@ class FlowDaemon:
         if self._focus_timer_task is not None and not self._focus_timer_task.done():
             self._focus_timer_task.cancel()
         self._focus_timer_task = asyncio.create_task(self.start_focus_timer(task_id))
+
+    async def _handle_task_started(self, task_id: int) -> None:
+        self._start_focus_timer(task_id)
 
 
 # ---------------------------------------------------------------------------

@@ -215,18 +215,11 @@ class FlowApp:
         # 通知在非关键路径，使用后台事件广播
         if self.config.notifications.enabled:
             self.bus.subscribe(EventType.TASK_STATE_CHANGED, self._on_notify_bg)
-        # 上下文捕获走后台队列 — 绝不阻塞主业务
-        if self.config.context.capture_on_switch:
-            self.bus.subscribe(EventType.TASK_STATE_CHANGED, self._on_capture_context_bg)
 
     async def _on_state_changed(self, event) -> None:
         """响应状态变更：持久化 + 版本控制."""
         tasks = await self.repo.load_all()
         await self.repo.save_all(tasks)
-        if self.config.git.auto_commit:
-            p = event.payload
-            state_val = p.new_state.value if hasattr(p.new_state, "value") else str(p.new_state)
-            await asyncio.to_thread(self.vcs.commit, f"{self.config.git.commit_prefix} task #{p.task_id} → {state_val}")
 
     def _on_notify_bg(self, event) -> None:
         """状态变更自动通知 — 同步回调，由后台 Worker 驱动."""
@@ -242,17 +235,6 @@ class FlowApp:
         """优雅关闭 — 清理插件资源并等待后台队列排空."""
         self.plugins.teardown_all()
         await self._bg_worker.stop()
-
-    def _on_capture_context_bg(self, event) -> None:
-        """状态变更时异步捕获上下文快照 — 由后台 Worker 驱动.
-
-        这是一个同步回调，但实际的 async capture 由
-        BackgroundEventWorker 在其消费循环中异步执行。
-        """
-        task_id = event.payload.task_id if event.payload else None
-        if task_id is not None:
-            # 利用 ensure_future 启动异步捕获，不阻塞当前事件回调
-            asyncio.ensure_future(self.context.capture_async(task_id))
 
     # ── 工厂注册 API（供插件扩展） ──
 

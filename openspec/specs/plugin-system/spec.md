@@ -11,22 +11,40 @@ TBD
 ## Requirements
 
 ### Requirement: 模块化沙盒与插件上下文 (Plugin Context & Sandbox)
-HUD 的具体能力（网络通信、雷达监测、渲染画板）必须通过继承 `HookBasePlugin` 此类的插件模式接入。核心引擎为其发放限制性的 `PluginContext` (包含 `EventBus`，配置源和 `Hooks` 入口)，防止插件做无法追溯的跨域访问。为确保插件注册和解绑过程的安全，`Hooks` 入口对象必须遵循强类型的 `Protocol`（如 `HookRegistrarProtocol`），严禁将其作为 `Any` 传递，以支持静态类型验证和自动补全。
+HUD 插件系统 MUST 通过受限上下文暴露能力，并且关键运行时操作（状态迁移、组件注册）必须进入宿主定义的规范化管线，禁止插件或服务层绕过宿主直接触发底层状态变更。
 
-#### Scenario: 插件规范订阅事件
-- **WHEN** 当 `VisualPlugin` (视觉渲染插件) 在 `setup(ctx)` 执行期间。
-- **THEN** 插件只能通过 `ctx.event_bus.subscribe(EventType.STATE_CHANGED, self.draw)` 或 `ctx.register_hook(self)` 进行合理合法地监听，而非通过自己 import 其他包拿到实例强行绑定。这些接口的参数受到强类型系统的严格检查保障，以杜绝因类型疏忽引起的运行期注册崩溃。这是防腐层的核心所在。
+#### Scenario: 插件遵循规范化运行时边界
+- **WHEN** 插件在 `setup(ctx)` 中接入状态或组件能力
+- **THEN** 插件通过 `ctx` 暴露的受控 API 进入宿主管线
+- **AND** 不允许通过直接访问底层状态机实例绕过 lifecycle hooks/events。
+
+#### Scenario: Admin 插件无直连转移逃逸
+- **WHEN** admin 插件需要请求状态变化
+- **THEN** 只能调用宿主提供的规范化 transition API
+- **AND** 不存在可公开调用的 `state_machine.transition(...)` 直通路径。
 
 ### Requirement: UI 微件化组合机制 (Sub-Widgets as Plugins)
-区别于传统的单例庞大视图，主控 UI 画布作为一个简单的无边框透明 `QMainWindow`。提供接口允许外设“图形插件”向画布某个坐标系、层级 (`Z-index`) 或布局槽口注册自定义 `QWidget` 碎片。
+HUD 插件组件组合 MUST 使用 slot-aware 的宿主组合管线，并以宿主注册表为唯一真相源，不得依赖仅本地字典或一次性启动快照挂载。
 
-#### Scenario: 按需组装视觉部件
-- **WHEN** 一个专注于番茄钟功能的 `PomodoroUIPlugin` 初始化时，它向 Canvas 请求 `ctx.ui.register_widget('top_right', PomodoroWidget())`。
-- **THEN** 插件系统能在隔离逻辑的同时，将这个图形部件安全合并显示进 HUD 的指定版图块。
+#### Scenario: 组件经由 slot 策略挂载
+- **WHEN** 视觉插件注册组件到命名 slot
+- **THEN** 宿主执行 `before_widget_register`、持久化注册记录、发出注册事件并按 slot 策略挂载
+- **AND** 后续动态注册也会进入同一组合路径。
 
 ### Requirement: 插件防出错隔离 (Fault-Tolerant execution)
-使用主程序类似机制的 `HookManager` 带有熔断器。当某个逻辑插件抛出异常。必须阻止异常崩溃蔓延至事件中心。
+插件系统 MUST 在 setup、hook 执行、teardown 和清理阶段提供故障隔离，并保持宿主可继续运行和收敛关闭。
 
-#### Scenario: 某渲染插件偶发崩溃不死机
-- **WHEN** 自定义的某个 UI 插件在响应重绘事件时遭遇了 `ValueError` 导致内部方法奔溃。
-- **THEN** `EventBus/Hooks` 包裹的执行器会截获此异常做错误级别 Log，但保证整个 HUD App 依然持续工作响应后台。
+#### Scenario: setup 或 hook 异常隔离
+- **WHEN** 某插件 setup 或 hook 抛出异常
+- **THEN** 异常被隔离记录，不导致宿主整体崩溃
+- **AND** 其他插件生命周期可继续推进。
+
+#### Scenario: teardown 异常后宿主仍可清理
+- **WHEN** 某插件 teardown 抛出异常
+- **THEN** 宿主继续执行剩余插件 teardown 和宿主侧注册清理
+- **AND** 不因单插件故障中断全局 shutdown。
+
+#### Scenario: 宿主按 owner 清理注册痕迹
+- **WHEN** 宿主进入 shutdown 或插件卸载
+- **THEN** hook/event/widget 注册项按 owner 归属被回收
+- **AND** 清理不依赖插件主动反注册。

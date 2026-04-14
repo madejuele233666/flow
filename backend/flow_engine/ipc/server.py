@@ -49,6 +49,7 @@ from flow_engine.ipc.defaults import (
     IPC_DEFAULT_TCP_HOST,
     IPC_DEFAULT_TCP_PORT,
 )
+from flow_engine.state.transitions import TransitionVetoedError
 
 logger = logging.getLogger(__name__)
 
@@ -427,6 +428,24 @@ class IPCServer:
                         ERR_REQUEST_TIMEOUT,
                         f"request timeout after {self._request_timeout_ms}ms",
                         retryable=True,
+                    ),
+                ),
+                False,
+            )
+        except TransitionVetoedError as exc:
+            return (
+                make_response(
+                    request.id,
+                    error=make_error(
+                        ERR_INVALID_PARAMS,
+                        str(exc),
+                        retryable=False,
+                        data={
+                            "error_type": "TransitionVetoedError",
+                            "task_id": exc.task_id,
+                            "old_state": exc.old_state.value,
+                            "target": exc.target.value,
+                        },
                     ),
                 ),
                 False,

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from flow_engine.ipc.protocol import (
+    ERR_INVALID_PARAMS,
     HelloLimits,
     METHOD_SESSION_HELLO,
     METHOD_SESSION_PING,
@@ -86,6 +87,8 @@ class IPCClient:
         if not isinstance(msg, Response):
             raise RuntimeError(f"expected Response, got {type(msg).__name__}")
         if msg.error is not None:
+            if msg.error.code == ERR_INVALID_PARAMS:
+                self._raise_invalid_params_error(msg.error.message, msg.error.data)
             raise RuntimeError(f"daemon error [{msg.error.code}]: {msg.error.message}")
         return msg.result
 
@@ -169,3 +172,20 @@ class IPCClient:
             await writer.wait_closed()
         except Exception:
             pass
+
+    @staticmethod
+    def _raise_invalid_params_error(message: str, data: dict[str, Any] | None) -> None:
+        if data and data.get("error_type") == "TransitionVetoedError":
+            from flow_engine.state.machine import TaskState
+            from flow_engine.state.transitions import TransitionVetoedError
+
+            task_id = data.get("task_id")
+            old_state = data.get("old_state")
+            target = data.get("target")
+            if isinstance(task_id, int) and isinstance(old_state, str) and isinstance(target, str):
+                raise TransitionVetoedError(
+                    task_id=task_id,
+                    old_state=TaskState(old_state),
+                    target=TaskState(target),
+                )
+        raise ValueError(message)

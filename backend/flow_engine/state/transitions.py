@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from flow_engine.events import EventBus, EventType
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class TransitionVetoedError(Exception):
+class TransitionVetoedError(ValueError):
     """插件通过 before_task_transition 钩子否决了状态转移.
 
     与 IllegalTransitionError 不同：
@@ -82,7 +83,19 @@ class TransitionEngine:
             IllegalTransitionError: 如果转移不合法。
         """
         async with self._lock:
-            return await self._transition_unlocked(task, target)
+            resolved_target = await self._prepare_transition_unlocked(task, target)
+            return await self._commit_transition_unlocked(task, resolved_target)
+
+    async def prepare_transition(self, task: Task, target: TaskState) -> TaskState:
+        """预检状态转移，返回已解析的目标状态且不产生副作用."""
+        async with self._lock:
+            shadow = replace(task)
+            return await self._prepare_transition_unlocked(shadow, target)
+
+    async def commit_transition(self, task: Task, target: TaskState) -> Task:
+        """提交已预检的状态转移，只执行状态写入、事件广播和 after hook."""
+        async with self._lock:
+            return await self._commit_transition_unlocked(task, target)
 
     async def ensure_single_active(
         self,
@@ -111,25 +124,23 @@ class TransitionEngine:
     # ── 内部实现（无锁，仅供已持锁的上层方法调用） ──
 
     async def _transition_unlocked(self, task: Task, target: TaskState) -> Task:
+        resolved_target = await self._prepare_transition_unlocked(task, target)
+        return await self._commit_transition_unlocked(task, resolved_target)
+
+    async def _prepare_transition_unlocked(self, task: Task, target: TaskState) -> TaskState:
         """状态转移的核心逻辑（不含锁，由调用方负责并发控制）.
 
         执行流程：
         1. before_task_transition 拦截钩子（bail_veto，可一票否决）
         2. on_before_transition 中间件（waterfall，可修改目标状态）
         3. 合法性校验
-        4. 状态变更
-        5. 事件广播（强类型载荷）
-        6. on_after_transition 通知
         """
-        from flow_engine.events_payload import TaskStateChangedPayload
         from flow_engine.hooks_payload import (
-            AfterTransitionPayload,
             BeforeTransitionPayload,
             TransitionErrorPayload,
             VetoCheckPayload,
         )
 
-        # ── 0. before_task_transition 拦截钩子 (bail_veto: 插件可一票否决) ──
         if self._hooks:
             veto_payload = VetoCheckPayload(
                 task=task, old_state=task.state, target_state=target,
@@ -138,14 +149,11 @@ class TransitionEngine:
             if approved is False:
                 raise TransitionVetoedError(task.id, task.state, target)
 
-        # ── 1. on_before_transition 钩子 (waterfall: 插件可原地修改 target_state) ──
         if self._hooks:
             wf_payload = BeforeTransitionPayload(task=task, target_state=target)
             await self._hooks.call("on_before_transition", wf_payload)
-            # 插件可能已原地修改 wf_payload.target_state
             target = wf_payload.target_state
 
-        # ── 2. 合法性校验 ──
         if not can_transition(task.state, target):
             error = IllegalTransitionError(task.state, target)
             if self._hooks:
@@ -154,6 +162,18 @@ class TransitionEngine:
                 )
                 await self._hooks.call("on_transition_error", err_payload)
             raise error
+
+        return target
+
+    async def _commit_transition_unlocked(self, task: Task, target: TaskState) -> Task:
+        """提交已解析的状态转移（不再次运行 before hook / waterfall hook）.
+
+        4. 状态变更
+        5. 事件广播（强类型载荷）
+        6. on_after_transition 通知
+        """
+        from flow_engine.events_payload import TaskStateChangedPayload
+        from flow_engine.hooks_payload import AfterTransitionPayload
 
         # ── 3. 状态变更 ──
         old_state = task.state
@@ -178,4 +198,3 @@ class TransitionEngine:
             await self._hooks.call("on_after_transition", after_payload)
 
         return task
-

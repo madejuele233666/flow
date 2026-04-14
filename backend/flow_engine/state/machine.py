@@ -71,7 +71,7 @@ def can_transition(current: TaskState, target: TaskState) -> bool:
     return target in TRANSITIONS.get(current, frozenset())
 
 
-class IllegalTransitionError(Exception):
+class IllegalTransitionError(ValueError):
     """非法状态转移异常."""
 
     def __init__(self, current: TaskState, target: TaskState) -> None:

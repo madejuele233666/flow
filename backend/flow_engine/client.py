@@ -21,8 +21,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import asdict
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
@@ -113,9 +113,12 @@ class LocalClient:
     所有领域逻辑在此汇聚，CLI 层无需触碰 repo / engine。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, app=None) -> None:
         from flow_engine.app import FlowApp
-        self._app = FlowApp()
+        from flow_engine.task_flow_runtime import TaskFlowRuntime
+
+        self._app = app or FlowApp()
+        self._task_flow = TaskFlowRuntime(self._app)
 
     async def add_task(
         self,
@@ -125,44 +128,13 @@ class LocalClient:
         tags: list[str] | None = None,
         template_name: str | None = None,
     ) -> dict[str, Any]:
-        app = self._app
-
-        if template_name:
-            tmpl = app.templates.get(template_name)
-            if tmpl is None:
-                raise ValueError(f"未找到模板: {template_name}")
-            base_id = await app.repo.next_id()
-            parsed_ddl = datetime.strptime(ddl, "%Y-%m-%d") if ddl else None
-            output = tmpl.create(base_id=base_id, title=title, priority=priority, ddl=parsed_ddl)
-            tasks = await app.repo.load_all()
-            tasks.extend(output.tasks)
-            await app.repo.save_all(tasks)
-            if app.config.git.auto_commit:
-                await asyncio.to_thread(
-                    app.vcs.commit, f"{app.config.git.commit_prefix} add template:{template_name}"
-                )
-            return {
-                "template": template_name,
-                "tasks": [{"id": t.id, "title": t.title, "priority": t.priority} for t in output.tasks],
-            }
-
-        from flow_engine.storage.task_model import Task
-        parsed_ddl = datetime.strptime(ddl, "%Y-%m-%d") if ddl else None
-        task = Task(
-            id=await app.repo.next_id(),
+        return await self._task_flow.add_task(
             title=title,
             priority=priority,
-            ddl=parsed_ddl,
-            tags=list(tags or []),
+            ddl=ddl,
+            tags=tags,
+            template_name=template_name,
         )
-        tasks = await app.repo.load_all()
-        tasks.append(task)
-        await app.repo.save_all(tasks)
-        if app.config.git.auto_commit:
-            await asyncio.to_thread(
-                app.vcs.commit, f"{app.config.git.commit_prefix} add #{task.id} {task.title}"
-            )
-        return {"id": task.id, "title": task.title, "priority": task.priority}
 
     async def list_tasks(
         self,
@@ -210,113 +182,22 @@ class LocalClient:
         ] if ranked else []
 
     async def start_task(self, task_id: int) -> dict[str, Any]:
-        app = self._app
-        tasks = await app.repo.load_all()
-        task = self._find(tasks, task_id)
-
-        paused = await app.engine.ensure_single_active(tasks, task_id)
-        for p in paused:
-            if app.config.context.capture_on_switch:
-                await asyncio.to_thread(app.context.capture, p.id)
-
-        from flow_engine.state.machine import TaskState
-        await app.engine.transition(task, TaskState.IN_PROGRESS)
-        task.started_at = datetime.now()
-        await app.repo.save_all(tasks)
-
-        # 尝试恢复现场
-        snapshot = await asyncio.to_thread(app.context.restore_latest, task_id)
-        return {
-            "id": task.id,
-            "title": task.title,
-            "paused": [p.id for p in paused],
-            "restored_window": snapshot.active_window if snapshot and snapshot.active_window else None,
-        }
+        return await self._task_flow.start_task(task_id)
 
     async def done_task(self) -> dict[str, Any]:
-        app = self._app
-        tasks = await app.repo.load_all()
-        active = next((t for t in tasks if t.is_active), None)
-        if not active:
-            raise ValueError("当前没有进行中的任务")
-
-        from flow_engine.state.machine import TaskState
-        await app.engine.transition(active, TaskState.DONE)
-        await app.repo.save_all(tasks)
-        return {"id": active.id, "title": active.title}
+        return await self._task_flow.done_task()
 
     async def pause_task(self) -> dict[str, Any]:
-        app = self._app
-        tasks = await app.repo.load_all()
-        active = next((t for t in tasks if t.is_active), None)
-        if not active:
-            raise ValueError("当前没有进行中的任务")
-
-        if app.config.context.capture_on_switch:
-            await asyncio.to_thread(app.context.capture, active.id)
-
-        from flow_engine.state.machine import TaskState
-        await app.engine.transition(active, TaskState.PAUSED)
-        await app.repo.save_all(tasks)
-        return {"id": active.id, "title": active.title}
+        return await self._task_flow.pause_task()
 
     async def resume_task(self, task_id: int) -> dict[str, Any]:
-        app = self._app
-        tasks = await app.repo.load_all()
-        task = self._find(tasks, task_id)
-
-        from flow_engine.state.machine import TaskState
-        if task.state == TaskState.BLOCKED:
-            await app.engine.transition(task, TaskState.READY)
-            task.block_reason = ""
-        elif task.state == TaskState.PAUSED:
-            await app.engine.ensure_single_active(tasks, task_id)
-            await app.engine.transition(task, TaskState.IN_PROGRESS)
-            task.started_at = datetime.now()
-        else:
-            raise ValueError(f"任务 #{task_id} 当前状态为 {task.state.value}，无法恢复")
-
-        await app.repo.save_all(tasks)
-        return {"id": task.id, "title": task.title, "state": task.state.value}
+        return await self._task_flow.resume_task(task_id)
 
     async def block_task(self, task_id: int, reason: str = "") -> dict[str, Any]:
-        app = self._app
-        tasks = await app.repo.load_all()
-        task = self._find(tasks, task_id)
-
-        from flow_engine.state.machine import TaskState
-        await app.engine.transition(task, TaskState.BLOCKED)
-        task.block_reason = reason
-        await app.repo.save_all(tasks)
-        return {"id": task.id, "title": task.title, "reason": reason}
+        return await self._task_flow.block_task(task_id, reason=reason)
 
     async def get_status(self) -> dict[str, Any]:
-        app = self._app
-        active = await app.repo.get_active()
-        if not active:
-            return {"active": None}
-
-        duration_min = None
-        if active.started_at:
-            delta = datetime.now() - active.started_at
-            duration_min = int(delta.total_seconds() // 60)
-
-        break_suggested = False
-        if active.started_at:
-            elapsed = (datetime.now() - active.started_at).total_seconds() / 60
-            if elapsed >= app.config.focus.break_interval_minutes:
-                break_suggested = True
-
-        return {
-            "active": {
-                "id": active.id,
-                "title": active.title,
-                "priority": active.priority,
-                "state": active.state.value,
-                "duration_min": duration_min,
-            },
-            "break_suggested": break_suggested,
-        }
+        return await self._task_flow.get_status()
 
     async def breakdown_task(self, task_id: int) -> list[str]:
         app = self._app
@@ -371,9 +252,9 @@ class RemoteClient:
     只传输最小必要参数（task_id、title 等），不传整个任务列表。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, socket_path: Path | None = None) -> None:
         from flow_engine.ipc.client import IPCClient
-        self._ipc = IPCClient()
+        self._ipc = IPCClient(socket_path=socket_path)
 
     async def connect(self) -> None:
         await self._ipc.connect()
@@ -455,10 +336,12 @@ async def create_client() -> FlowClient:
     Daemon 未运行 → LocalClient (直连)
     Daemon PID 存在但连接失败 → 静默降级为 LocalClient
     """
+    from flow_engine.config import load_config
     from flow_engine.daemon import FlowDaemon
 
-    if FlowDaemon.is_running():
-        remote = RemoteClient()
+    config = load_config()
+    if FlowDaemon.is_running(config):
+        remote = RemoteClient(socket_path=FlowDaemon.socket_path(config))
         try:
             await remote.connect()
             return remote
