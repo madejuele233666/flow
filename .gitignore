@@ -16,5 +16,4 @@ sourcecode.zip
 .flow-launcher-venv/
 .agent/
 openspec/
-docs/
 .gitignore

@@ -1,0 +1,19 @@
+{
+  "change": "docs-roadmap-refresh",
+  "mode": "implementation",
+  "final_assessment": "blocked",
+  "findings": [
+    {
+      "id": "F001",
+      "severity": "WARNING",
+      "dimension": "Coherence",
+      "artifact": "implementation",
+      "problem": "The root repository README still described Flow as split into only two workspaces and treated root-level items as the only shared assets, which no longer matched the roadmap or the actual package layout. `shared/` is an active packaged surface (`flow-ipc`).",
+      "evidence": "`README.md` said the repo was split into `backend/` and `frontend/` only. `docs/roadmap/01-current-state.md` describes `backend/`, `frontend/`, and `shared/` as the current layout. `shared/pyproject.toml` defines the shipped `flow-ipc` package.",
+      "recommendation": "Update `README.md` so the top-level repository layout matches the current truth surface: `shared/` should be described as an active workspace, while `docs/`, `openspec/`, and `.agent/` remain non-package root assets.",
+      "redirect_layer": "implementation",
+      "blocking": true,
+      "auto_fixable": true
+    }
+  ]
+}

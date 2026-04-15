@@ -1,0 +1,30 @@
+{
+  "contract": "agent-spawn-decision-v1",
+  "change": "docs-roadmap-refresh",
+  "phase": "implementation_verify",
+  "requested_agent_type": "verify-reviewer",
+  "spawn_kind": "policy_required",
+  "reason_code": "initial_working_session",
+  "decision": "allow",
+  "recorded_at": "2026-04-15T01:11:14Z",
+  "summary": "Initial working-pass verifier spawn for roadmap documentation implementation verification.",
+  "prior_session": {
+    "agent_id": null,
+    "session_role": "none",
+    "reuse_expected": false,
+    "reuse_attempted": false,
+    "reuse_succeeded": false,
+    "reuse_blocker": "not_applicable"
+  },
+  "policy_basis": {
+    "sequence_ref": "openspec/schemas/ai-enforced-workflow/verification-sequence.md#verify-sequence/default",
+    "rule_ref": "initial-working-session"
+  },
+  "evidence": {
+    "findings_path": "docs/roadmap/verification/working-findings.json",
+    "verifier_evidence_path": "docs/roadmap/verification/working-verifier-evidence.json"
+  },
+  "notes": [
+    "Scope is limited to roadmap-related documentation changes and their truth anchors in code and launcher scripts."
+  ]
+}

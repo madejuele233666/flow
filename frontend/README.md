@@ -15,7 +15,7 @@ The current repository and day-to-day development environment may live in WSL, b
 
 When frontend transport or packaging decisions differ between WSL/Linux and Windows, prefer the Windows runtime model unless a document explicitly states that the behavior is development-only.
 
-For the concrete lessons learned while building the Windows desktop launcher and syncing from WSL, see [docs/windows-launcher-postmortem.md](/home/madejuele/projects/flow/docs/windows-launcher-postmortem.md).
+For the current documentation set, start with [docs/roadmap/README.md](/home/madejuele/projects/flow/docs/roadmap/README.md). For the archived Windows launcher postmortem, see [docs/past/windows-launcher-postmortem.md](/home/madejuele/projects/flow/docs/past/windows-launcher-postmortem.md).
 
 ## Install
 
