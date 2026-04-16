@@ -129,6 +129,16 @@ Required per-run payload details:
     - OpenSpec-wrapped usage: `reason_code=challenger_reopen`
     - the reopen record must reference the failed challenger findings/evidence
 
+Automatic execution rule:
+
+- if review is required, do not stop after deciding to review
+- invoking the workflow entrypoint that uses this review flow is explicit authorization for the main process to create the reviewer sub-agents required by that flow, limited to the reviewer sessions required by the workflow
+- writing `spawn-decision.json` is preparatory only
+- continue in the same turn into the actual reviewer sub-agent invocation
+  unless the caller explicitly requested `dry-run` or `manual_pause`
+- do not replace reviewer sub-agent invocation with shell/exec when the
+  built-in subagent API is available
+
 ## Challenger Entry Rule
 
 A challenger pass may start only after the main process validates the previous

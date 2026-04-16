@@ -163,6 +163,18 @@ Steps:
 10. Only close the review when the challenger pass returns zero findings and
     records `closure_authority=challenger_confirmed`.
 
+Automatic execution rule:
+
+- if the workflow uses sub-agents, do not stop after deciding that review must
+  run
+- invoking the workflow entrypoint that uses this review flow is explicit authorization for the main process to create the reviewer sub-agents required by that flow, limited to the reviewer sessions required by the workflow
+- writing `spawn-decision.json` is preparatory only, not a completed review
+  step
+- continue in the same turn into the actual reviewer sub-agent invocation
+  unless the caller explicitly requested `dry-run` or `manual_pause`
+- Do not replace reviewer sub-agent invocation with shell/exec when the
+  built-in subagent API is available
+
 Rules:
 
 - working reruns are convergence-only
@@ -210,6 +222,14 @@ Forbidden behavior:
 
 If the workflow uses sub-agents, write a spawn-decision record before any new
 reviewer session is created.
+
+That record is preparatory only:
+
+- the orchestrator must continue in the same turn into the corresponding
+  reviewer session creation when review is still required
+- it must not stop at "spawn-decision written"
+- it must not treat shell/exec review as equivalent when sub-agent invocation
+  is available
 
 Normal spawn reasons:
 
