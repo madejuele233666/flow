@@ -122,7 +122,8 @@ working session：
 challenger session：
 - 必须 fresh spawn
 - 只在 working session 零 findings 后启动
-- 如果 challenger 发现新问题，它自己的结果成为新的当前工作基线
+- 如果 challenger 发现新问题，它自己的结果成为新的当前工作基线，
+  也就是被晋升的 working baseline
 
 ## 必改文件
 

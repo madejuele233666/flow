@@ -160,7 +160,9 @@ Steps:
    succeeds.
 8. Run the challenger pass against the converged result.
 9. If the challenger pass returns new findings, treat that result as the new
-   active baseline and continue with working review again.
+   active baseline, write the machine-readable
+   `review-loop-reopen-record-v1.json`, and promote that challenger session
+   into the next working baseline before continuing working review.
 10. Only close the review when the challenger pass returns zero findings and
     records `closure_authority=challenger_confirmed`.
 
@@ -185,7 +187,8 @@ Rules:
 - challenger must be a fresh session
 - only challenger can grant final implementation closure
 - challenger findings reopen the loop through a machine-readable
-  `challenger_reopen` record back to the active working session
+  `challenger_reopen` record that promotes the challenger session into the
+  next working baseline
 
 ## Coverage Rules
 
@@ -244,8 +247,8 @@ Reopen transition record:
 - `review-loop-reopen-record-v1.json`
 - `reason_code=challenger_reopen`
 - references the failed challenger outputs
-- resumes the latest working session rather than spawning a fresh working
-  reviewer
+- promotes the failed challenger session into the next working reviewer
+  baseline rather than spawning a fresh working reviewer
 
 Exception spawn reasons:
 
@@ -273,8 +276,8 @@ Session policy:
 - ordinary working reruns must keep the same `agent_id`
 - a changed working `agent_id` requires an explicit recovery spawn-decision
   record
-- challenger findings must resume the latest working session after a
-  machine-readable reopen record
+- challenger findings must promote the challenger session into the next
+  working baseline after a machine-readable reopen record
 - challenger must always use a fresh session
 
 ## Auto-Fix Routing
