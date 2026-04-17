@@ -19,6 +19,11 @@ This is an implementation-validation workflow.
 Planning artifacts may be used as optional reference material, but they are not
 the defining structure of the standalone flow.
 
+For the current distilled principles that apply across both schema and
+non-schema flows, read:
+
+- [review-loop principles](/home/madejuele/projects/2K0300/docs/review-flow/review-loop-principles.md)
+
 ## Core Rule
 
 The reviewer emits findings and execution evidence.
@@ -189,14 +194,16 @@ review loop, not as a request to invent an artifact phase.
 Active implementation surface:
 
 - [current-authoritative-verification-flow.md](/home/madejuele/projects/2K0300/docs/review-flow/current-authoritative-verification-flow.md)
-- [transition-resolver design lessons](/home/madejuele/projects/2K0300/docs/review-flow/transition-resolver-design-lessons.md)
 - [review-loop reference index](/home/madejuele/projects/2K0300/openspec/schemas/modules/review-loop/REFERENCE-INDEX.md)
 - [transition-resolver module](/home/madejuele/projects/2K0300/openspec/schemas/modules/review-loop/transition-resolver/README.md)
 - [transition resolver caller integration](/home/madejuele/projects/2K0300/openspec/schemas/modules/review-loop/transition-resolver/CALLER-INTEGRATION.md)
 
 Archived construction-period scaffolding:
 
+- [review-flow archive index](/home/madejuele/projects/2K0300/docs/review-flow/archive/README.md)
 - [transition-resolver hardening archive](/home/madejuele/projects/2K0300/docs/review-flow/archive/transition-resolver-hardening-2026-04-17/README.md)
+- [code-review-first archive](/home/madejuele/projects/2K0300/docs/review-flow/archive/code-review-first-2026-04-17/README.md)
+- [transition-resolver design lessons archive](/home/madejuele/projects/2K0300/docs/review-flow/archive/transition-resolver-design-lessons-2026-04-17/README.md)
 
 ## Mechanical Validation
 

@@ -18,7 +18,7 @@ Do not treat any file here as the current operational entrypoint.
 Use these files instead when operating the current workflow:
 
 - [current-authoritative-verification-flow.md](/home/madejuele/projects/2K0300/docs/review-flow/current-authoritative-verification-flow.md)
-- [transition-resolver design lessons](/home/madejuele/projects/2K0300/docs/review-flow/transition-resolver-design-lessons.md)
+- [transition-resolver design lessons archive](/home/madejuele/projects/2K0300/docs/review-flow/archive/transition-resolver-design-lessons-2026-04-17/README.md)
 - [review-flow README](/home/madejuele/projects/2K0300/docs/review-flow/README.md)
 - [transition-resolver module](/home/madejuele/projects/2K0300/openspec/schemas/modules/review-loop/transition-resolver/README.md)
 - [transition resolver caller integration](/home/madejuele/projects/2K0300/openspec/schemas/modules/review-loop/transition-resolver/CALLER-INTEGRATION.md)

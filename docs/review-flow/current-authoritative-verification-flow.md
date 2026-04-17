@@ -34,6 +34,8 @@ Primary authority:
 Supporting standalone / operator docs:
 
 - `docs/review-flow/README.md`
+- `docs/review-flow/review-loop-principles.md`
+- `docs/review-flow/archive/transition-resolver-design-lessons-2026-04-17/README.md`
 - `docs/reusable-review-flow.md`
 
 Resolver-layer authority:
