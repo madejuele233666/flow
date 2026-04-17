@@ -1,0 +1,26 @@
+{
+  "target_ref": "paths:docs/review-flow/transition-resolver-execution-plan.md",
+  "final_assessment": "blocked",
+  "findings": [
+    {
+      "id": "F001-standalone-authorization-source-missing",
+      "severity": "WARNING",
+      "dimension": "Correctness",
+      "problem": "The spawn-authorization section narrows reviewer authorization to caller/step metadata and `verify-sequence/default` declarations, but the shared review-loop contract also allows standalone, context-free module-root invocation itself to authorize reviewer sub-agents. As written, the resolver can reject valid standalone runs or force them through schema-local wrappers.",
+      "evidence": "In `docs/review-flow/transition-resolver-execution-plan.md:211-240`, authorization inputs are limited to workflow entrypoint, step declaration, and pause flags, with the rule that reviewer authorization exists only when the current caller/step is explicitly in the review workflow. But the same document claims schema and non-schema callers share the resolver (`:636-651`) and that a context-free external prompt against the module root should be sufficient (`:653-669`). The authoritative module docs say invoking the module to run the review loop is itself explicit authorization for reviewer sessions (`openspec/schemas/modules/review-loop/README.md:37-50`; `openspec/schemas/modules/review-loop/VERIFY-IMPLEMENTATION.md:122-134`).",
+      "recommendation": "Add module-root invocation with the minimal review bundle as an explicit authorization source in the resolver rules, so standalone `target_ref` reviews are authorized without requiring a schema-local step declaration.",
+      "blocking": true,
+      "auto_fixable": false
+    },
+    {
+      "id": "F002-mechanical-gate-not-preserved",
+      "severity": "WARNING",
+      "dimension": "Completeness",
+      "problem": "The plan re-specifies closure, path coherence, and denial logic inside the resolver, but it never preserves the module's mandatory post-run mechanical gate. That leaves the implementation free to claim success without running the required run-directory validation step.",
+      "evidence": "The execution plan defines resolver-based closure and path checks in `docs/review-flow/transition-resolver-execution-plan.md:433-463` and `:546-618`, and the suggested module shape only says `validator or guard` (`:564-575`). The execution order and acceptance criteria (`:620-651`) do not require any final guard run. By contrast, `openspec/schemas/modules/review-loop/VERIFY-IMPLEMENTATION.md:178-186` requires running `review_loop_guard.py --run-dir <review-run-dir>` after writing artifacts and states the workflow must not be claimed as followed if that check fails.",
+      "recommendation": "Make the mechanical gate explicit in the plan: either retain `review_loop_guard.py` as a mandatory final-closure check or require an equivalent validator with the same authoritative guarantees before `allow_close` can be honored.",
+      "blocking": true,
+      "auto_fixable": false
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "change": "paths:docs/review-flow/transition-resolver-execution-plan.md",
+  "target_ref": "paths:docs/review-flow/transition-resolver-execution-plan.md",
+  "final_assessment": "blocked",
+  "findings": [
+    {
+      "id": "TRP-WORK-3-001",
+      "severity": "WARNING",
+      "dimension": "Coherence",
+      "problem": "The repaired plan still leaves one machine-contract key mismatch in the resolver output surface. It names the mechanical-gate requirement field differently in the decision-metadata section and in the authoritative minimal-output section, so consumers still do not have one exact output key to implement against.",
+      "evidence": "The decision-surface section says required metadata per decision includes `mechanical_gate_required` and `mechanical_gate_status` (docs/review-flow/transition-resolver-execution-plan.md:589-602). The later section then declares itself the authoritative machine-readable output contract, but uses `required_mechanical_gate` instead of `mechanical_gate_required` while keeping `mechanical_gate_status` unchanged (docs/review-flow/transition-resolver-execution-plan.md:711-736). Because the same output concept is expressed under two different key names inside the plan's own authoritative contract surface, a mechanical consumer would still need to guess which field name is canonical.",
+      "recommendation": "Use one field name consistently across both sections. Either rename the earlier metadata field to `required_mechanical_gate` or rename the authoritative output field back to `mechanical_gate_required`, then state that exact key as the canonical machine-readable field.",
+      "blocking": true,
+      "auto_fixable": false
+    }
+  ]
+}

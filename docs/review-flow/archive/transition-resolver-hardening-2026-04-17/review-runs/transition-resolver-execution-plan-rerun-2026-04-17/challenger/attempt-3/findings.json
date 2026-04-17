@@ -1,0 +1,26 @@
+{
+  "target_ref": "paths:docs/review-flow/transition-resolver-execution-plan.md",
+  "final_assessment": "blocked",
+  "findings": [
+    {
+      "id": "F-001",
+      "severity": "WARNING",
+      "dimension": "Coherence",
+      "problem": "The plan elevates a markdown section into the authoritative machine-readable resolver output contract without binding that contract to any concrete schema, versioned file, or validator path.",
+      "evidence": "The document says the work should extract shared constraints into machine-readable resolver inputs at `docs/review-flow/transition-resolver-execution-plan.md:118-120`, but its module shape only suggests future `transition-resolver/` contract files at `...:653-660`. The later section then declares itself to be the authoritative machine-readable output contract at `...:742-783`, yet it names no `contract` field, version, schema path, or guard. `docs/review-flow/README.md:185-187` still classifies this file as a planning brief, and repository search shows the new decision-surface fields are only defined here.",
+      "recommendation": "Add a concrete versioned resolver contract artifact and validation hook, then point the plan and callers at that file. If that artifact is not part of this work yet, downgrade the section from authoritative contract language to a proposed output shape.",
+      "blocking": true,
+      "auto_fixable": false
+    },
+    {
+      "id": "F-002",
+      "severity": "WARNING",
+      "dimension": "Correctness",
+      "problem": "The resolver output contract introduces repair destinations and routing metadata that have no shared consumer contract, so callers would still need prompt-level interpretation to turn the resolver result into action.",
+      "evidence": "The plan requires resolver outputs such as `docs_artifact_repair`, `source_repair`, and `reroute_class` at `docs/review-flow/transition-resolver-execution-plan.md:341-355` and `...:758-770`. The shared verification sequence only defines phase-level routing semantics at `openspec/schemas/ai-enforced-workflow/verification-sequence.md:220-224`, while the current docs-first entrypoint still names the concrete routing target as `openspec-repair-change` at `/home/madejuele/.codex/skills/openspec-artifact-verify/SKILL.md:30` and `...:66`. Repository search found `docs_artifact_repair` and `source_repair` only in this plan.",
+      "recommendation": "Either map resolver outputs to existing concrete caller destinations in a shared contract, or add explicit companion contracts and caller updates for every new destination before making the resolver output authoritative.",
+      "blocking": true,
+      "auto_fixable": false
+    }
+  ]
+}

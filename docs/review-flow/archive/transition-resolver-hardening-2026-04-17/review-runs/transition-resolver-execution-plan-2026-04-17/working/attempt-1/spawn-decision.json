@@ -1,0 +1,15 @@
+{
+  "contract": "review-loop-standalone-spawn-decision-v1",
+  "target_ref": "paths:docs/review-flow/transition-resolver-execution-plan.md",
+  "next_session_role": "working",
+  "requested_agent_type": "verify-reviewer",
+  "reason_code": "initial_working_session",
+  "decision": "allow",
+  "recorded_at": "2026-04-16T23:17:04Z",
+  "prior_session": {
+    "agent_id": null,
+    "session_role": "none",
+    "reuse_blocker": "not_applicable"
+  },
+  "evidence": {}
+}

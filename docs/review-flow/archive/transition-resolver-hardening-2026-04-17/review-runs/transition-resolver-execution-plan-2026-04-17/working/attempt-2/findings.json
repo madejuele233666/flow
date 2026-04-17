@@ -1,0 +1,16 @@
+{
+  "target_ref": "paths:docs/review-flow/transition-resolver-execution-plan.md",
+  "final_assessment": "blocked",
+  "findings": [
+    {
+      "id": "F001-mechanical-gate-still-loosened-beyond-current-contract",
+      "severity": "WARNING",
+      "dimension": "Correctness",
+      "problem": "The repaired plan now preserves a mandatory mechanical gate, but it still allows `review_loop_guard.py` to be replaced by \"an equivalent validator\" even though this document explicitly complements, rather than replaces, the current shared module contract that requires the specific guard command. As written, the plan permits an implementation path that would diverge from the active review-loop contract before that contract is updated.",
+      "evidence": "`docs/review-flow/transition-resolver-execution-plan.md:648-650` says closure may require `review_loop_guard.py --run-dir <review-run-dir>` \"or an equivalent validator with the same authority guarantees,\" while `:692-698` says this document complements and does not replace `openspec/schemas/modules/review-loop/VERIFY-IMPLEMENTATION.md`. The authoritative module file currently requires the exact command `python3 .../review_loop_guard.py --run-dir <review-run-dir>` and says the workflow must not be claimed as followed if that check fails (`openspec/schemas/modules/review-loop/VERIFY-IMPLEMENTATION.md:178-186`).",
+      "recommendation": "Tighten the plan so the current implementation path requires the exact `review_loop_guard.py` gate unless and until the shared module contract is formally updated. If an equivalent validator is intended for future replacement, make that conditional on coordinated source-of-truth contract changes rather than allowed by default in this plan.",
+      "blocking": true,
+      "auto_fixable": false
+    }
+  ]
+}

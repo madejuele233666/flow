@@ -1,0 +1,17 @@
+{
+  "change": "paths:docs/review-flow/transition-resolver-execution-plan.md",
+  "target_ref": "paths:docs/review-flow/transition-resolver-execution-plan.md",
+  "final_assessment": "blocked",
+  "findings": [
+    {
+      "id": "TRP-WORK-6-001",
+      "severity": "WARNING",
+      "dimension": "Coherence",
+      "problem": "The repaired plan adds an explicit `spawn_initial_working` transition, but the authoritative output contract still cannot represent that transition's session mode without contradicting the plan's own session policy.",
+      "evidence": "The session/freshness rules say initial working must use `spawn_initial_working`, while `fresh working` is reserved for exception handling only (docs/review-flow/transition-resolver-execution-plan.md:208-213). The decision enum also includes `spawn_initial_working` (docs/review-flow/transition-resolver-execution-plan.md:587-600,744-757). But the authoritative output contract limits `required_session_mode` to `reuse working`, `fresh challenger`, `fresh working exception`, or `no-spawn` (docs/review-flow/transition-resolver-execution-plan.md:761-763). As written, a machine consumer has no non-contradictory `required_session_mode` value for the initial working spawn path that the plan now requires.",
+      "recommendation": "Extend the authoritative output contract so `required_session_mode` can encode the initial working spawn explicitly, for example by adding `initial working`/`fresh working initial` as a distinct value, or by otherwise defining a canonical session-mode mapping for `spawn_initial_working` that does not reuse the exception-only `fresh working` mode.",
+      "blocking": true,
+      "auto_fixable": false
+    }
+  ]
+}

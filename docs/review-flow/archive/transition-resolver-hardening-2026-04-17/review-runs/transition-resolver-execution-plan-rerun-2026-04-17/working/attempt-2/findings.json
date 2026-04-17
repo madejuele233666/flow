@@ -1,0 +1,17 @@
+{
+  "change": "paths:docs/review-flow/transition-resolver-execution-plan.md",
+  "target_ref": "paths:docs/review-flow/transition-resolver-execution-plan.md",
+  "final_assessment": "blocked",
+  "findings": [
+    {
+      "id": "TRP-WORK-2-001",
+      "severity": "WARNING",
+      "dimension": "Coherence",
+      "problem": "The repaired plan still leaves the resolver output contract internally inconsistent. One section says certain decision metadata is required, but the later minimal output contract omits several of those fields, so a mechanical consumer cannot tell which output shape is authoritative.",
+      "evidence": "The plan says every resolver decision should carry required metadata including `required_path_checks`, `authorized`, `blocking`, `mechanical_gate_required`, and `mechanical_gate_status` (docs/review-flow/transition-resolver-execution-plan.md:589-602). But the later `Recommended Minimal Resolver Outputs` section only requires `decision`, `resolved_transition`, `required_session_mode`, `reroute_destination`, `reroute_class`, `required_evidence_checks`, `required_invocation_mode`, `required_output_artifacts`, `required_mechanical_gate`, and `denial_reason` (docs/review-flow/transition-resolver-execution-plan.md:709-727). That omission is material because earlier sections require path-coherence checks and explicit mechanical-gate state for transition and closure handling (docs/review-flow/transition-resolver-execution-plan.md:458-490,604-624).",
+      "recommendation": "Collapse these into one authoritative resolver-output contract or make the later minimal output section an explicit superset of the earlier required metadata. At minimum, preserve `required_path_checks` and `mechanical_gate_status`, and clarify whether `authorized` and `blocking` remain mandatory output fields or are intentionally derived elsewhere.",
+      "blocking": true,
+      "auto_fixable": false
+    }
+  ]
+}

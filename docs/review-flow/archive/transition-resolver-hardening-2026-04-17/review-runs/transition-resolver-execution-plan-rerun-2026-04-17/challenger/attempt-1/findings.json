@@ -1,0 +1,27 @@
+{
+  "change": "paths:docs/review-flow/transition-resolver-execution-plan.md",
+  "target_ref": "paths:docs/review-flow/transition-resolver-execution-plan.md",
+  "final_assessment": "blocked",
+  "findings": [
+    {
+      "id": "DOC-CHAL-RERUN-001",
+      "severity": "WARNING",
+      "dimension": "Coherence",
+      "problem": "The proposed resolver output contract assigns two different meanings to `decision`, so the document's own authoritative machine-readable surface is internally ambiguous.",
+      "evidence": "docs/review-flow/transition-resolver-execution-plan.md:572-587 defines the resolver's decision enum as transition values such as `send_input_same_working`, `spawn_fresh_challenger`, `allow_close`, and `blocked`. But the later section labeled \"the authoritative machine-readable output contract\" redefines `decision` as only `allow or deny` and adds a separate `resolved_transition` field at docs/review-flow/transition-resolver-execution-plan.md:711-716. A consumer following the enum section will branch on `decision`, while a consumer following the output-contract section will need `resolved_transition`, so the contract is not self-consistent enough to implement mechanically.",
+      "recommendation": "Pick one canonical meaning for `decision`. Either make `decision` the transition enum everywhere, or rename the binary field to something like `decision_class` or `allowed` and keep `resolved_transition` as the only transition field.",
+      "blocking": true,
+      "auto_fixable": false
+    },
+    {
+      "id": "DOC-CHAL-RERUN-002",
+      "severity": "WARNING",
+      "dimension": "Completeness",
+      "problem": "The plan's authoritative resolver output contract still does not require `spawn-decision.json` for fresh-spawn transitions, even though the shared review-loop module makes that artifact mandatory for every challenger attempt and any exception fresh working attempt.",
+      "evidence": "The shared module requires `spawn-decision.json` for `working/attempt-1`, for any later working attempt that changes `agent_id` under an explicit recovery reason, and for every challenger attempt (openspec/schemas/modules/review-loop/VERIFY-IMPLEMENTATION.md:146-178). In this plan, run-layout/path coherence tracks `spawn_decision_path` as an orchestration input at docs/review-flow/transition-resolver-execution-plan.md:458-490, and the decision surface includes `spawn_fresh_challenger` and `spawn_exception_working` at :575-581. But the later authoritative output contract at :711-736 only says `required_output_artifacts` must be able to name `reopen-record.json` when challenger reopen is selected; it never makes `spawn-decision.json` an explicit required artifact for the fresh-spawn outcomes. That leaves a mandatory run artifact implicit at the exact point where the document claims to define the machine-readable contract.",
+      "recommendation": "Extend the authoritative output contract so fresh-spawn decisions explicitly require `spawn-decision.json`, including the reason/binding needed for challenger spawn and exception fresh-working spawn, instead of only calling out `reopen-record.json`.",
+      "blocking": true,
+      "auto_fixable": false
+    }
+  ]
+}

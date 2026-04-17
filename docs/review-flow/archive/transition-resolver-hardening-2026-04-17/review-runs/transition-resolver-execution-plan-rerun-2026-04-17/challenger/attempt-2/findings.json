@@ -1,0 +1,36 @@
+{
+  "target_ref": "paths:docs/review-flow/transition-resolver-execution-plan.md",
+  "final_assessment": "blocked",
+  "findings": [
+    {
+      "id": "F-001",
+      "severity": "WARNING",
+      "dimension": "Completeness",
+      "problem": "The execution plan never gives the resolver an explicit transition for creating the initial working reviewer session, so the start of the review loop still depends on outer prompt logic instead of resolver-owned state.",
+      "evidence": "In docs/review-flow/transition-resolver-execution-plan.md:181-187 and 575-587, the resolver outputs cover same-working reuse, fresh challenger, reopen, exception fresh working, repair, and close, but no initial working spawn. This conflicts with openspec/schemas/ai-enforced-workflow/verification-sequence.md:43-45 and 92-108 plus docs/reusable-review-flow.md:146-147 and 237-240, which require every review to start with a working pass and treat the initial working session as a normal spawn reason with a preceding spawn-decision record.",
+      "recommendation": "Add an explicit initial-working resolver decision and required output artifacts for that path, including the normal spawn reason `initial_working_session` and same-turn continuation into verifier invocation.",
+      "blocking": true,
+      "auto_fixable": false
+    },
+    {
+      "id": "F-002",
+      "severity": "WARNING",
+      "dimension": "Correctness",
+      "problem": "The plan's fail-closed challenger-entry logic is incomplete, so an implementation following it could open challenger without validating the full shared `challenger_entry` contract.",
+      "evidence": "The plan names `final_assessment`, coverage, saturation, and `source_review` binding as inputs in docs/review-flow/transition-resolver-execution-plan.md:170-179, but its explicit denial cases at 608-624 only reject missing binding, non-empty predecessor findings, and non-working predecessor evidence. The shared contract at openspec/schemas/modules/review-loop/contracts/review-loop-core-v1.json:87-104 and docs/review-flow/README.md:150-167 also require validating `final_assessment=pass`, `review_goal=implementation_correctness`, `coverage_status=complete`, `saturation_status=exhaustive`, and that the evidence agent matches `source_review.agent_id` before challenger starts.",
+      "recommendation": "Expand the challenger-entry rules, denial cases, and minimal resolver inputs so the resolver must validate the complete `challenger_entry` findings and evidence checks before allowing a challenger spawn.",
+      "blocking": true,
+      "auto_fixable": false
+    },
+    {
+      "id": "F-003",
+      "severity": "WARNING",
+      "dimension": "Correctness",
+      "problem": "The closure gate drops the shared contract's `final_assessment=pass` prerequisite, which makes the resolver's allow-close logic weaker than the current authoritative guard.",
+      "evidence": "In docs/review-flow/transition-resolver-execution-plan.md:431-456 and 614-624, the close conditions check final pass type, zero findings, `closure_authority=challenger_confirmed`, complete coverage, exhaustive saturation, and guard success, but not `final_assessment=pass`. The current guard in openspec/schemas/modules/review-loop/bin/review_loop_guard.py:985-987 and 1054-1056 rejects closure unless the final challenger findings JSON records `final_assessment=pass`.",
+      "recommendation": "Add `final_assessment=pass` to the resolver's closure inputs, fail-closed denial cases, and acceptance criteria so the planned resolver preserves the full current closure contract instead of delegating that gap to the guard alone.",
+      "blocking": true,
+      "auto_fixable": false
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "contract": "review-loop-standalone-spawn-decision-v1",
+  "target_ref": "paths:docs/review-flow/transition-resolver-execution-plan.md",
+  "next_session_role": "working",
+  "requested_agent_type": "verify-reviewer",
+  "reason_code": "challenger_reopen",
+  "decision": "allow",
+  "recorded_at": "2026-04-16T23:30:31Z",
+  "prior_session": {
+    "agent_id": "019d989f-40d2-74f1-b67b-ed3bfc36457e",
+    "session_role": "challenger",
+    "reuse_blocker": "challenger_found_new_findings"
+  },
+  "evidence": {
+    "source_review": {
+      "agent_id": "019d989f-40d2-74f1-b67b-ed3bfc36457e",
+      "findings_path": "challenger/attempt-1/findings.json",
+      "verifier_evidence_path": "challenger/attempt-1/verifier-evidence.json"
+    }
+  }
+}

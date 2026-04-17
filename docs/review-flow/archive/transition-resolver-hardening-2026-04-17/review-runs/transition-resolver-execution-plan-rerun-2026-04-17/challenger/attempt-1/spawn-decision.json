@@ -1,0 +1,21 @@
+{
+  "contract": "review-loop-standalone-spawn-decision-v1",
+  "target_ref": "paths:docs/review-flow/transition-resolver-execution-plan.md",
+  "next_session_role": "challenger",
+  "requested_agent_type": "verify-reviewer",
+  "reason_code": "challenger_pass",
+  "decision": "allow",
+  "recorded_at": "2026-04-17T00:24:59Z",
+  "prior_session": {
+    "agent_id": "verifier-transition-resolver-working-2026-04-17-attempt-1",
+    "session_role": "working",
+    "reuse_blocker": "policy_requires_challenger"
+  },
+  "evidence": {
+    "source_review": {
+      "agent_id": "verifier-transition-resolver-working-2026-04-17-attempt-1",
+      "findings_path": "working/attempt-4/findings.json",
+      "verifier_evidence_path": "working/attempt-4/verifier-evidence.json"
+    }
+  }
+}
