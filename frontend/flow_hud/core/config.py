@@ -31,6 +31,8 @@ try:
 except ModuleNotFoundError:
     import toml as tomllib  # type: ignore[no-redef]  # fallback
 
+HUD_CONFIG_FILENAME = "hud_config.toml"
+
 
 @dataclass
 class HudConfig:
@@ -106,19 +108,28 @@ class HudConfig:
     ipc_push_capabilities: list[str] = field(default_factory=lambda: list(IpcClientTuning.push_capabilities))
 
     @classmethod
+    def default_config_path(cls, data_dir: Path) -> Path:
+        """Map a HUD data directory to its canonical config file location."""
+        return data_dir.expanduser() / HUD_CONFIG_FILENAME
+
+    @classmethod
     def load(cls, config_path: Path | None = None) -> HudConfig:
         """从 hud_config.toml 加载配置，优先级: 环境变量 > toml > 默认值."""
         config = cls()
+        env_data_dir = os.environ.get("HUD_DATA_DIR")
 
         # 环境变量覆盖数据目录
-        if env_dir := os.environ.get("HUD_DATA_DIR"):
-            config.data_dir = Path(env_dir)
+        if env_data_dir:
+            config.data_dir = Path(env_data_dir).expanduser()
 
-        path = config_path or (config.data_dir / "hud_config.toml")
+        path = config_path.expanduser() if config_path is not None else cls.default_config_path(config.data_dir)
         if path.exists():
             with open(path, "rb") as f:
                 raw = tomllib.load(f)  # type: ignore[arg-type]
             config = cls._apply_dict(config, raw)
+
+        if env_data_dir:
+            config.data_dir = Path(env_data_dir).expanduser()
 
         # 确保数据目录存在
         config.data_dir.mkdir(parents=True, exist_ok=True)

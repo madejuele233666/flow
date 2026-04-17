@@ -31,6 +31,7 @@ substitute its own judgment for the prior working sub-agent output.
 Shared standalone contracts live here:
 
 - [review-loop-core-v1.json](/home/madejuele/projects/2K0300/openspec/schemas/modules/review-loop/contracts/review-loop-core-v1.json)
+- [review-loop-reopen-record-v1.json](/home/madejuele/projects/2K0300/openspec/schemas/modules/review-loop/contracts/review-loop-reopen-record-v1.json)
 - [review-loop-standalone-adapter-v1.json](/home/madejuele/projects/2K0300/openspec/schemas/modules/review-loop/contracts/review-loop-standalone-adapter-v1.json)
 - [review-loop-standalone-spawn-decision-v1.json](/home/madejuele/projects/2K0300/openspec/schemas/modules/review-loop/contracts/review-loop-standalone-spawn-decision-v1.json)
 - [VERIFY-IMPLEMENTATION.md](/home/madejuele/projects/2K0300/openspec/schemas/modules/review-loop/VERIFY-IMPLEMENTATION.md)
@@ -81,6 +82,7 @@ review-runs/<run-name>/
     attempt-2/
       findings.json
       verifier-evidence.json
+      reopen-record.json   # when challenger findings return to same working
       spawn-decision.json  # only for an explicit recovery exception
   challenger/
     attempt-1/
@@ -125,14 +127,18 @@ Required per-run payload details:
 13. If challenger finds new issues, treat that result as the new active
     baseline and return to working review.
 14. Record that reopen transition machine-readably:
-    - standalone: `reason_code=challenger_reopen`
-    - OpenSpec-wrapped usage: `reason_code=challenger_reopen`
+    - use [review-loop-reopen-record-v1.json](/home/madejuele/projects/2K0300/openspec/schemas/modules/review-loop/contracts/review-loop-reopen-record-v1.json)
     - the reopen record must reference the failed challenger findings/evidence
+    - then resume the latest working session with the same `agent_id`
+    - do not spawn a fresh working reviewer unless an explicit recovery
+      exception separately applies
 
 Automatic execution rule:
 
 - if review is required, do not stop after deciding to review
 - invoking the workflow entrypoint that uses this review flow is explicit authorization for the main process to create the reviewer sub-agents required by that flow, limited to the reviewer sessions required by the workflow
+- verifier reviewer spawns MUST use `fork_context=false` and pass only the
+  minimal verification bundle, optional `index_context`, and `output_paths`
 - writing `spawn-decision.json` is preparatory only
 - continue in the same turn into the actual reviewer sub-agent invocation
   unless the caller explicitly requested `dry-run` or `manual_pause`
@@ -175,6 +181,10 @@ implementation is correct", the intended entrypoint is:
 
 The AI should interpret that as a strict working/challenger implementation
 review loop, not as a request to invent an artifact phase.
+
+Planning and optimization brief for the next hardening step:
+
+- [transition-resolver-execution-plan.md](/home/madejuele/projects/2K0300/docs/review-flow/transition-resolver-execution-plan.md)
 
 ## Mechanical Validation
 

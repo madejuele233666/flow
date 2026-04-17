@@ -12,6 +12,7 @@ For schema-independent usage, prefer the standalone method and contracts in:
 
 - `docs/review-flow/README.md`
 - `openspec/schemas/modules/review-loop/contracts/review-loop-core-v1.json`
+- `openspec/schemas/modules/review-loop/contracts/review-loop-reopen-record-v1.json`
 - `openspec/schemas/modules/review-loop/contracts/review-loop-standalone-adapter-v1.json`
 - `openspec/schemas/modules/review-loop/contracts/review-loop-standalone-spawn-decision-v1.json`
 - `openspec/schemas/modules/review-loop/VERIFY-IMPLEMENTATION.md`
@@ -168,6 +169,8 @@ Automatic execution rule:
 - if the workflow uses sub-agents, do not stop after deciding that review must
   run
 - invoking the workflow entrypoint that uses this review flow is explicit authorization for the main process to create the reviewer sub-agents required by that flow, limited to the reviewer sessions required by the workflow
+- verifier reviewer spawns MUST use `fork_context=false` and pass only the
+  minimal verification bundle, optional `index_context`, and `output_paths`
 - writing `spawn-decision.json` is preparatory only, not a completed review
   step
 - continue in the same turn into the actual reviewer sub-agent invocation
@@ -182,7 +185,7 @@ Rules:
 - challenger must be a fresh session
 - only challenger can grant final implementation closure
 - challenger findings reopen the loop through a machine-readable
-  `challenger_reopen` transition back to working
+  `challenger_reopen` record back to the active working session
 
 ## Coverage Rules
 
@@ -236,6 +239,14 @@ Normal spawn reasons:
 - initial working session
 - challenger pass
 
+Reopen transition record:
+
+- `review-loop-reopen-record-v1.json`
+- `reason_code=challenger_reopen`
+- references the failed challenger outputs
+- resumes the latest working session rather than spawning a fresh working
+  reviewer
+
 Exception spawn reasons:
 
 - active session unavailable
@@ -251,7 +262,7 @@ contract:
 
 - `requested_agent_type=verify-reviewer`
 - `next_session_role=working|challenger`
-- `reason_code=initial_working_session|challenger_pass|challenger_reopen|active_session_unavailable|session_unresumable|tooling_recovery`
+- `reason_code=initial_working_session|challenger_pass|active_session_unavailable|session_unresumable|tooling_recovery`
 
 OpenSpec-only index/cache-maintenance spawn values must not appear in
 standalone spawn records or standalone workflow instructions.
@@ -262,6 +273,8 @@ Session policy:
 - ordinary working reruns must keep the same `agent_id`
 - a changed working `agent_id` requires an explicit recovery spawn-decision
   record
+- challenger findings must resume the latest working session after a
+  machine-readable reopen record
 - challenger must always use a fresh session
 
 ## Auto-Fix Routing

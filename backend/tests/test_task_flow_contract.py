@@ -123,6 +123,7 @@ def test_local_and_daemon_lifecycle_payloads_stay_in_parity(tmp_path: Path) -> N
         try:
             local_add = await local.add_task(title="alpha", priority=1)
             daemon_add = await daemon.add_task(title="alpha", priority=1)
+            assert set(local_add) == {"id", "title", "priority", "state"}
             assert local_add == daemon_add
 
             await local.add_task(title="beta", priority=2)
@@ -130,31 +131,39 @@ def test_local_and_daemon_lifecycle_payloads_stay_in_parity(tmp_path: Path) -> N
 
             local_start = await local.start_task(1)
             daemon_start = await daemon.start_task(1)
+            assert set(local_start) == {"id", "title", "state", "paused", "restored_window"}
             assert local_start == daemon_start
 
             local_status = await local.get_status()
             daemon_status = await daemon.get_status()
+            assert set(local_status) == {"active", "break_suggested"}
+            assert set(local_status["active"]) == {"id", "title", "priority", "state", "duration_min"}
             assert local_status == daemon_status
 
             local_pause = await local.pause_task()
             daemon_pause = await daemon.pause_task()
+            assert set(local_pause) == {"id", "title", "state"}
             assert local_pause == daemon_pause
 
             local_resume = await local.resume_task(1)
             daemon_resume = await daemon.resume_task(1)
+            assert set(local_resume) == {"id", "title", "state"}
             assert local_resume == daemon_resume
 
             local_block = await local.block_task(1, reason="waiting")
             daemon_block = await daemon.block_task(1, reason="waiting")
+            assert set(local_block) == {"id", "title", "state", "reason"}
             assert local_block == daemon_block
 
             local_resume_blocked = await local.resume_task(1)
             daemon_resume_blocked = await daemon.resume_task(1)
+            assert set(local_resume_blocked) == {"id", "title", "state"}
             assert local_resume_blocked == daemon_resume_blocked
             assert local_resume_blocked["state"] == TaskState.IN_PROGRESS.value
 
             local_done = await local.done_task()
             daemon_done = await daemon.done_task()
+            assert set(local_done) == {"id", "title", "state"}
             assert local_done == daemon_done
 
             assert await local.get_status() == {"active": None, "break_suggested": False}

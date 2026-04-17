@@ -18,6 +18,7 @@ pip install -e ".[dev]"
 ```bash
 cd backend
 flow --help
+flow daemon start
 flow daemon status
 flow tui
 ```
@@ -28,3 +29,5 @@ flow tui
 cd backend
 pytest -q
 ```
+
+Gate A backend-only run path and smoke scope live in [docs/day-use/operator-runbook.md](/home/madejuele/projects/flow/docs/day-use/operator-runbook.md) and [docs/day-use/gate-a-smoke.md](/home/madejuele/projects/flow/docs/day-use/gate-a-smoke.md).

@@ -95,6 +95,30 @@ def test_missing_active_field_degrades_to_offline_snapshot() -> None:
     assert emitted == [snapshot]
 
 
+def test_incomplete_active_payload_degrades_to_offline_snapshot() -> None:
+    emitted = []
+    controller = TaskStatusController(
+        request_status=lambda: {
+            "ok": True,
+            "result": {
+                "active": {
+                    "id": 7,
+                    "title": "deep work",
+                },
+                "break_suggested": False,
+            },
+            "error_code": None,
+            "message": None,
+        },
+        publish_snapshot=emitted.append,
+    )
+
+    snapshot = controller.bootstrap()
+
+    assert snapshot.mode == TaskStatusMode.OFFLINE
+    assert emitted == [snapshot]
+
+
 def test_timer_tick_updates_duration_without_reaching_into_transport_shape() -> None:
     emitted = []
     controller = TaskStatusController(

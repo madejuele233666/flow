@@ -1,10 +1,15 @@
 # 11. Horizon A 执行手册
 
-状态基线：2026-04-15
+状态基线：2026-04-17
 
 目标：
 
 **把今天已经存在的后端主任务流、IPC 边界、Windows HUD MVP 和本地 launcher 路径，收口成一个真正可日用的单机闭环。**
+
+注：
+
+- Gate A 对应的 repo-owned day-use contract、baseline、runbook、smoke gate 已经落地在 `docs/day-use/`。
+- 下面的步骤仍保留为 Horizon A 的执行说明与回溯入口，但不再是“还没有文档”的状态描述。
 
 这一步是整条路线的第一门。
 如果这里没有做扎实，后面的 Context、HUD、AI 都只会叠在一个“不好用但能跑”的底座上。
@@ -27,12 +32,13 @@ Horizon A 完成时，用户至少应满足下面三条：
 - `windows` runtime profile
 - task-status MVP
 - 本地 `flow-hud-control` launcher 链路
+- `docs/day-use/` 下的 Gate A contract、baseline、runbook、smoke gate
 
-这一步还没有的前置是：
+这一步不再缺少的是：
 
-- 面向日用的默认配置标准
-- 跨入口的一致错误表达
-- 明确的 operator runbook
+- 面向日用的默认配置标准已经发布并可验证
+- 跨入口的一致错误表达已经冻结为 repo-owned contract
+- 明确的 operator runbook 和 smoke gate 已经可执行
 
 ## 三. 这一步不做什么
 
@@ -222,6 +228,11 @@ Horizon A 完成时，用户至少应满足下面三条：
 - 单机配置基线已清楚
 - operator runbook 已存在
 - smoke 套件已可重复执行
+
+当前仓库状态：
+
+- Gate A 的文档、配置收口、验证命令和手工证据已经到位。
+- 这份文档现在更多承担路线回溯和后续阶段的前置引用作用。
 
 ## 六. 进入 Horizon B 前必须确认的事
 

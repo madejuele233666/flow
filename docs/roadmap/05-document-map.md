@@ -22,6 +22,16 @@
   - 角色：后端工作区入口
 - `frontend/README.md`
   - 角色：前端工作区入口
+- `docs/day-use/README.md`
+  - 角色：Gate A 单机日用操作面
+- `docs/day-use/task-flow-contract.md`
+  - 角色：Gate A 任务流契约参考
+- `docs/day-use/single-machine-baseline.md`
+  - 角色：Gate A 单机基线
+- `docs/day-use/operator-runbook.md`
+  - 角色：Gate A 运维手册
+- `docs/day-use/gate-a-smoke.md`
+  - 角色：Gate A smoke gate
 
 它们主要支持：
 
@@ -181,5 +191,7 @@
   - 已吸收到：`03-workstreams.md`、`07-guardrails.md`
 - `docs/past/aim.md`
   - 已吸收到：`02-north-star.md`、`03-workstreams.md`、`04-sequencing.md`、`09-capability-decomposition.md`
+- `docs/day-use/*.md`
+  - 已吸收到：`11-horizon-a-day-use.md` 的执行入口与 `10-execution-program.md` 的 Gate A 阶段门说明
 
 原文档仍保留为历史依据和上下文来源，但现行真相应以 roadmap 目录和实际代码为准。

@@ -1,6 +1,6 @@
 # Flow 路线图总览
 
-状态基线：2026-04-15
+状态基线：2026-04-17
 
 这个目录是当前文档真相面，但其中只有一部分内容是在陈述“今天已经实现了什么”。
 
@@ -51,6 +51,8 @@
 如果你要看现有文档体系和归属，看：
 
 - [05-document-map.md](./05-document-map.md)
+- 如果你要看 Gate A 的 repo-owned 日用操作面，看：
+  [docs/day-use/README.md](../day-use/README.md)
 
 如果你要看后续设计应继续依赖哪些结构锚点，看：
 
@@ -74,6 +76,7 @@
   - `TaskFlowRuntime` 已承载任务生命周期主链，并有 local/daemon parity 测试
 - Windows HUD 已有受测的产品运行路径
   - `windows` runtime profile 固定装配 `ipc-client + task-status`
+- Gate A 的 day-use contract、baseline、runbook 和 smoke gate 已经发布并经过实现验证
 
 按同一标准看，Flow 还没有到终局产品：
 
@@ -83,6 +86,7 @@
 - 插件和交付路径都已有底座
   - Windows 侧也已有一条经核实的本地 launcher 链路
 - 但这些还不是完整、通用的产品交付面
+  - Gate A 已经不再是“待补文档”的阶段，而是已发布的单机日用闭环基线
 
 ## 使用规则
 

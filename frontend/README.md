@@ -31,6 +31,13 @@ cd frontend
 python -m flow_hud.main
 ```
 
+Windows-targeted Gate A runtime path:
+
+```bash
+cd frontend
+python -m flow_hud.windows_main
+```
+
 Connection endpoint precedence:
 
 1. runtime explicit override (`set_runtime_endpoint_override(...)`)
@@ -65,3 +72,5 @@ Don't:
 cd frontend
 pytest -q
 ```
+
+Gate A frontend-only startup, `HUD_DATA_DIR -> hud_config.toml` rules, and smoke scope live in [docs/day-use/single-machine-baseline.md](/home/madejuele/projects/flow/docs/day-use/single-machine-baseline.md), [docs/day-use/operator-runbook.md](/home/madejuele/projects/flow/docs/day-use/operator-runbook.md), and [docs/day-use/gate-a-smoke.md](/home/madejuele/projects/flow/docs/day-use/gate-a-smoke.md).
