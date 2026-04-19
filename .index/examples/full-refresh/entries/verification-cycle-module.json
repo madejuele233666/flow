@@ -1,0 +1,72 @@
+{
+  "contract": "repository-index-entry-v1",
+  "entry_id": "verification-cycle-module",
+  "title": "Verification Cycle Module",
+  "kind": "module",
+  "summary": "Defines the active implementation-correctness verification cycle and its caller/orchestrator contracts.",
+  "responsibility": "Own the reusable verifier invocation contract, agent lifecycle rules, and mechanical validation for implementation review runs.",
+  "boundary_paths": [
+    "openspec/schemas/modules/verification-cycle"
+  ],
+  "important_files": [
+    "openspec/schemas/modules/verification-cycle/README.md",
+    "openspec/schemas/modules/verification-cycle/contracts/verification-cycle-core-v1.json",
+    "openspec/schemas/modules/verification-cycle/orchestrator/CALLER-INTEGRATION.md",
+    "openspec/schemas/modules/verification-cycle/bin/verification_cycle_guard.py"
+  ],
+  "inputs": [
+    {
+      "name": "verification bundle",
+      "description": "Normalized verifier invocation fields bound through the OpenSpec or standalone adapter contract."
+    },
+    {
+      "name": "caller state",
+      "description": "Caller-maintained agent table and latest verifier outputs.",
+      "paths": [
+        "openspec/schemas/modules/verification-cycle/contracts/verification-cycle-agent-table-v1.json"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "normalized verifier artifacts",
+      "description": "Machine-readable findings and verifier evidence used by callers and the mechanical guard."
+    },
+    {
+      "name": "orchestrator decisions",
+      "description": "Deterministic next-step decisions for resume, spawn, repair, and terminate.",
+      "paths": [
+        "openspec/schemas/modules/verification-cycle/orchestrator/contracts/orchestrator-decision-v1.json"
+      ]
+    }
+  ],
+  "external_dependencies": [
+    {
+      "name": "jsonschema",
+      "kind": "python-package",
+      "notes": "Used by verification guards and schema-aware validation tooling."
+    }
+  ],
+  "public_interfaces": [
+    {
+      "name": "verification-cycle-core-v1",
+      "kind": "json-contract",
+      "location": "openspec/schemas/modules/verification-cycle/contracts/verification-cycle-core-v1.json",
+      "notes": "Canonical shared field groups and cycle rules."
+    },
+    {
+      "name": "verification_cycle_guard.py",
+      "kind": "validator-entrypoint",
+      "location": "openspec/schemas/modules/verification-cycle/bin/verification_cycle_guard.py",
+      "notes": "Mechanical gate for review run directories."
+    }
+  ],
+  "review_hints": [
+    "Read the core contract before interpreting caller-specific docs.",
+    "Treat README, VERIFY-IMPLEMENTATION, and CALLER-INTEGRATION as the fastest orientation path.",
+    "Review changes here for contract drift before reviewing Stage A caller prose."
+  ],
+  "notes": [
+    "Entries capture stable architecture and review anchors rather than implementation narration."
+  ]
+}

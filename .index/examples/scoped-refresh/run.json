@@ -1,0 +1,24 @@
+{
+  "contract": "repository-index-run-v1",
+  "repo_id": "2K0300-example",
+  "generated_at": "2026-04-19T20:10:00+08:00",
+  "mode": "scoped_refresh",
+  "scope": {
+    "kind": "paths",
+    "paths": [
+      ".index",
+      "openspec/schemas/modules/verification-cycle"
+    ],
+    "notes": "Refresh only the verification-cycle and repository-index surfaces."
+  },
+  "manifest_path": ".index/examples/scoped-refresh/manifest.json",
+  "summary_path": ".index/examples/scoped-refresh/SUMMARY.md",
+  "validator_status": {
+    "tool": ".index/bin/validate_repository_index.py",
+    "status": "pass",
+    "validated_at": "2026-04-19T20:10:05+08:00",
+    "notes": [
+      "Example payload for a scoped refresh."
+    ]
+  }
+}

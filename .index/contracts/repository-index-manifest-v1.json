@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": ".index/contracts/repository-index-manifest-v1.json",
+  "contract": "repository-index-manifest-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "repo_id",
+    "generated_at",
+    "mode",
+    "scope",
+    "counters",
+    "stale",
+    "errors",
+    "entries"
+  ],
+  "properties": {
+    "contract": {
+      "const": "repository-index-manifest-v1"
+    },
+    "repo_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "mode": {
+      "enum": [
+        "full_refresh",
+        "scoped_refresh"
+      ]
+    },
+    "scope": {
+      "$ref": "#/$defs/scope"
+    },
+    "counters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entry_count",
+        "fresh_count",
+        "reused_count",
+        "stale_count",
+        "error_count"
+      ],
+      "properties": {
+        "entry_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fresh_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reused_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stale_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "error_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "stale": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entry_ids",
+        "notes"
+      ],
+      "properties": {
+        "entry_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "errors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "count",
+        "items"
+      ],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "minLength": 1
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "entry_id",
+          "path",
+          "status"
+        ],
+        "properties": {
+          "entry_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "fresh",
+              "reused",
+              "stale",
+              "error"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "paths",
+        "notes"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "full_repo",
+            "paths"
+          ]
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

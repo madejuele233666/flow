@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": ".index/contracts/repository-index-run-v1.json",
+  "contract": "repository-index-run-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "repo_id",
+    "generated_at",
+    "mode",
+    "scope",
+    "manifest_path",
+    "summary_path",
+    "validator_status"
+  ],
+  "properties": {
+    "contract": {
+      "const": "repository-index-run-v1"
+    },
+    "repo_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "mode": {
+      "enum": [
+        "full_refresh",
+        "scoped_refresh"
+      ]
+    },
+    "scope": {
+      "$ref": "#/$defs/scope"
+    },
+    "manifest_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "summary_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "validator_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tool",
+        "status"
+      ],
+      "properties": {
+        "tool": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "fail",
+            "not_run"
+          ]
+        },
+        "validated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "full_refresh"
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
+      "then": {
+        "properties": {
+          "scope": {
+            "properties": {
+              "kind": {
+                "const": "full_repo"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "scoped_refresh"
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
+      "then": {
+        "properties": {
+          "scope": {
+            "properties": {
+              "kind": {
+                "const": "paths"
+              },
+              "paths": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "paths",
+        "notes"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "full_repo",
+            "paths"
+          ]
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

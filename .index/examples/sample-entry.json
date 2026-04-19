@@ -1,0 +1,52 @@
+{
+  "contract": "repository-index-entry-v1",
+  "entry_id": "repository-index-contract",
+  "title": "Repository Index Contract",
+  "kind": "contract",
+  "summary": "Sample standalone entry showing the required shape for repository-level index metadata.",
+  "responsibility": "Describe the `.index/` contract surface and keep its claims explicitly non-authoritative.",
+  "boundary_paths": [
+    ".index"
+  ],
+  "important_files": [
+    ".index/README.md",
+    ".index/contracts/repository-index-run-v1.json",
+    ".index/contracts/repository-index-entry-v1.json"
+  ],
+  "inputs": [
+    {
+      "name": "refresh target",
+      "description": "Repository or scoped path set chosen for the run."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "index contract artifacts",
+      "description": "Run, manifest, and entry payloads written under `.index/`.",
+      "paths": [
+        ".index/contracts/repository-index-run-v1.json",
+        ".index/contracts/repository-index-manifest-v1.json",
+        ".index/contracts/repository-index-entry-v1.json"
+      ]
+    }
+  ],
+  "external_dependencies": [
+    {
+      "name": "jsonschema",
+      "kind": "python-package",
+      "notes": "Used by the validator for schema enforcement."
+    }
+  ],
+  "public_interfaces": [
+    {
+      "name": "validate_repository_index.py",
+      "kind": "validator-entrypoint",
+      "location": ".index/bin/validate_repository_index.py",
+      "notes": "Primary validation entrypoint for repository index payloads."
+    }
+  ],
+  "review_hints": [
+    "Confirm the entry stays machine-first.",
+    "Check that the entry does not claim verifier authority."
+  ]
+}

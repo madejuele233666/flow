@@ -1,0 +1,65 @@
+{
+  "contract": "repository-index-entry-v1",
+  "entry_id": "repository-index-contract",
+  "title": "Repository Index Contract",
+  "kind": "contract",
+  "summary": "Defines the external `.index/` run, manifest, and entry contracts plus the repository-level validator entrypoint.",
+  "responsibility": "Own the machine-readable shape for repository indexing and keep `.index/` explicitly outside verification authority.",
+  "boundary_paths": [
+    ".index"
+  ],
+  "important_files": [
+    ".index/README.md",
+    ".index/contracts/repository-index-run-v1.json",
+    ".index/contracts/repository-index-manifest-v1.json",
+    ".index/contracts/repository-index-entry-v1.json",
+    ".index/bin/validate_repository_index.py"
+  ],
+  "inputs": [
+    {
+      "name": "repository structure",
+      "description": "Stable directories, contracts, and entrypoints inspected by external indexing tooling."
+    },
+    {
+      "name": "refresh scope",
+      "description": "Full-repo or scoped paths declared in the run contract."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "run metadata",
+      "description": "Top-level record for one indexing execution.",
+      "paths": [
+        ".index/contracts/repository-index-run-v1.json"
+      ]
+    },
+    {
+      "name": "manifest and entries",
+      "description": "Machine-readable entry inventory and per-entry architectural summaries.",
+      "paths": [
+        ".index/contracts/repository-index-manifest-v1.json",
+        ".index/contracts/repository-index-entry-v1.json"
+      ]
+    }
+  ],
+  "external_dependencies": [
+    {
+      "name": "jsonschema",
+      "kind": "python-package",
+      "notes": "Used by the `.index/` validator to enforce contract conformance."
+    }
+  ],
+  "public_interfaces": [
+    {
+      "name": "validate_repository_index.py",
+      "kind": "validator-entrypoint",
+      "location": ".index/bin/validate_repository_index.py",
+      "notes": "Validates run, manifest, and entry payloads plus scoped refresh boundaries."
+    }
+  ],
+  "review_hints": [
+    "Confirm `.index/` claims stay reference-only.",
+    "Check that scoped runs do not point outside declared paths.",
+    "Review example payloads together with the validator."
+  ]
+}

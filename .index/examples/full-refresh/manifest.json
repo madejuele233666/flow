@@ -1,0 +1,40 @@
+{
+  "contract": "repository-index-manifest-v1",
+  "repo_id": "2K0300-example",
+  "generated_at": "2026-04-19T20:00:00+08:00",
+  "mode": "full_refresh",
+  "scope": {
+    "kind": "full_repo",
+    "paths": [],
+    "notes": "Periodic full-repository refresh."
+  },
+  "counters": {
+    "entry_count": 2,
+    "fresh_count": 2,
+    "reused_count": 0,
+    "stale_count": 0,
+    "error_count": 0
+  },
+  "stale": {
+    "entry_ids": [],
+    "notes": []
+  },
+  "errors": {
+    "count": 0,
+    "items": []
+  },
+  "entries": [
+    {
+      "entry_id": "verification-cycle-module",
+      "path": ".index/examples/full-refresh/entries/verification-cycle-module.json",
+      "status": "fresh",
+      "summary": "Implementation correctness verification contracts and orchestration."
+    },
+    {
+      "entry_id": "repository-index-contract",
+      "path": ".index/examples/full-refresh/entries/repository-index-contract.json",
+      "status": "fresh",
+      "summary": "External repository indexing contracts and validator."
+    }
+  ]
+}

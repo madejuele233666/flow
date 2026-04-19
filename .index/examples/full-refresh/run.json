@@ -1,0 +1,21 @@
+{
+  "contract": "repository-index-run-v1",
+  "repo_id": "2K0300-example",
+  "generated_at": "2026-04-19T20:00:00+08:00",
+  "mode": "full_refresh",
+  "scope": {
+    "kind": "full_repo",
+    "paths": [],
+    "notes": "Periodic full-repository refresh."
+  },
+  "manifest_path": ".index/examples/full-refresh/manifest.json",
+  "summary_path": ".index/examples/full-refresh/SUMMARY.md",
+  "validator_status": {
+    "tool": ".index/bin/validate_repository_index.py",
+    "status": "pass",
+    "validated_at": "2026-04-19T20:00:05+08:00",
+    "notes": [
+      "Example payload for a full refresh."
+    ]
+  }
+}

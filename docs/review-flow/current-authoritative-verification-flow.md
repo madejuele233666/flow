@@ -106,7 +106,7 @@ working
 11. When reviewer sub-agents are required, built-in subagent invocation is the
     default path.
 12. Reviewer spawns must use `fork_context=false` and pass only the minimal
-    verification bundle, optional `index_context`, and `output_paths`.
+    verification bundle and `output_paths`.
 
 ## Working Convergence Conditions
 
