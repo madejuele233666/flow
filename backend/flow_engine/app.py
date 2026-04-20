@@ -24,8 +24,10 @@ import logging
 from typing import Any
 
 from flow_engine.config import AppConfig, load_config
-from flow_engine.context.aw_plugin import ActivityWatchPlugin
+from flow_engine.context.aw_plugin import ActivityWatchPlugin, ActivityWatchTrailCollector
 from flow_engine.context.base_plugin import ContextService, SnapshotManager
+from flow_engine.context.mounts import MountService
+from flow_engine.context.trail import TrailStore
 from flow_engine.events import BackgroundEventWorker, EventBus, EventType
 from flow_engine.hooks import HookManager
 from flow_engine.notifications.base import NotificationService, NotifyLevel
@@ -139,11 +141,22 @@ class FlowApp:
 
         # ── 上下文捕获层 ──
         snapshot_mgr = SnapshotManager(self.config.paths.snapshots_path)
-        self.context = ContextService(snapshot_mgr)
+        self.trails = TrailStore(self.config.paths.trails_path) if self.config.context.trail_enabled else None
+        self.context = ContextService(snapshot_mgr, trail_store=self.trails)
         if self.config.context.enabled:
             self.context.register(
                 ActivityWatchPlugin(self.config.context.activitywatch_url)
             )
+        if self.config.context.trail_enabled:
+            self.context.register_collector(ActivityWatchTrailCollector())
+        self.mounts = (
+            MountService(
+                self.config.paths.mounts_path,
+                lock_timeout=self.config.file_lock.timeout_seconds,
+            )
+            if self.config.context.mount_enabled
+            else None
+        )
 
         # ── 调度层（组合式排序器） ──
         self.ranker = CompositeRanker(

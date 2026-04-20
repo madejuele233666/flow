@@ -11,6 +11,7 @@ from flow_engine.app import FlowApp
 from flow_engine.client import LocalClient, RemoteClient, create_client
 from flow_engine.config import AppConfig
 from flow_engine.context.base_plugin import Snapshot
+from flow_engine.notifications.base import Notification, Notifier, NotifyLevel
 from flow_engine.daemon import FlowDaemon
 from flow_engine.events import EventType
 from flow_engine.state.machine import TaskState
@@ -21,16 +22,27 @@ from flow_engine.storage.task_model import Task
 class FakeContext:
     def __init__(self) -> None:
         self.snapshots: dict[int, Snapshot] = {}
-        self.capture_calls: list[int] = []
+        self.capture_calls: list[tuple[int, str]] = []
         self.restore_calls: list[int] = []
         self.fail_capture_for: set[int] = set()
         self.fail_restore_for: set[int] = set()
 
-    async def capture_async(self, task_id: int) -> Snapshot:
-        self.capture_calls.append(task_id)
+    async def capture_async(self, task_id: int, *, capture_trigger: str = "") -> Snapshot:
+        self.capture_calls.append((task_id, capture_trigger))
         if task_id in self.fail_capture_for:
             raise RuntimeError(f"capture failed for {task_id}")
-        snapshot = Snapshot(task_id=task_id, active_window=f"window-{task_id}")
+        snapshot = Snapshot(
+            task_id=task_id,
+            active_window=f"window-{task_id}",
+            active_file=f"/tmp/file-{task_id}.py",
+            active_workspace=f"/tmp/workspace-{task_id}",
+            open_windows=[f"window-{task_id}"],
+            open_tabs=[f"tab-{task_id}"],
+            open_files=[f"/tmp/file-{task_id}.py"],
+            source_plugin="fake",
+            capture_trigger=capture_trigger,
+            session_duration_sec=300,
+        )
         self.snapshots[task_id] = snapshot
         return snapshot
 
@@ -74,6 +86,19 @@ class DaemonAdapter:
 
     async def get_status(self):
         return await self._client.get_status()
+
+
+class RecordingNotifier(Notifier):
+    def __init__(self) -> None:
+        self.records: list[Notification] = []
+
+    @property
+    def name(self) -> str:
+        return "recording"
+
+    def send(self, notification: Notification) -> bool:
+        self.records.append(notification)
+        return True
 
 
 def _build_app(tmp_path: Path, context: FakeContext | None = None, *, safe_mode: bool = True) -> FlowApp:
@@ -131,8 +156,9 @@ def test_local_and_daemon_lifecycle_payloads_stay_in_parity(tmp_path: Path) -> N
 
             local_start = await local.start_task(1)
             daemon_start = await daemon.start_task(1)
-            assert set(local_start) == {"id", "title", "state", "paused", "restored_window"}
+            assert set(local_start) == {"id", "title", "state", "paused", "restored_window", "restore_report"}
             assert local_start == daemon_start
+            assert set(local_start["restore_report"]) == {"task_id", "restored", "degraded", "failed", "user_message"}
 
             local_status = await local.get_status()
             daemon_status = await daemon.get_status()
@@ -402,6 +428,7 @@ def test_start_snapshot_paths_degrade_without_breaking_task_flow(tmp_path: Path)
             await adapter.pause_task()
             second_start = await adapter.start_task(1)
             assert second_start["restored_window"] == "window-1"
+            assert second_start["restore_report"]["restored"]["active_window"] == "window-1"
 
             await adapter.pause_task()
             context.fail_capture_for.add(1)
@@ -412,6 +439,13 @@ def test_start_snapshot_paths_degrade_without_breaking_task_flow(tmp_path: Path)
 
             restore_failure = await adapter.start_task(1)
             assert restore_failure["restored_window"] is None
+            assert restore_failure["restore_report"] == {
+                "task_id": 1,
+                "restored": {},
+                "degraded": [],
+                "failed": [],
+                "user_message": None,
+            }
             assert (await adapter.get_status())["active"]["id"] == 1
         finally:
             if isinstance(adapter, DaemonAdapter):
@@ -526,6 +560,112 @@ def test_default_git_auto_commit_persists_transition_state(tmp_path: Path) -> No
                 text=True,
             )
             assert status.stdout.strip() == ""
+        finally:
+            await app.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_capture_on_switch_false_disables_restore_for_start_and_resume(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        context = FakeContext()
+        config = AppConfig()
+        config.paths.data_dir = tmp_path / "gate-data"
+        config.git.enabled = False
+        config.git.auto_commit = False
+        config.notifications.enabled = False
+        config.plugin_breaker.safe_mode = True
+        config.context.enabled = False
+        config.context.capture_on_switch = False
+
+        app = FlowApp(config)
+        app.context = context
+        client = LocalClient(app)
+        try:
+            await client.add_task(title="alpha")
+            context.snapshots[1] = Snapshot(
+                task_id=1,
+                active_window="window-1",
+                active_file="/tmp/file-1.py",
+                source_plugin="fake",
+                capture_trigger="PAUSE",
+            )
+
+            started = await client.start_task(1)
+            assert started["restored_window"] is None
+            assert started["restore_report"]["restored"] == {}
+            assert context.restore_calls == []
+
+            await app.repo.save_all([Task(id=1, title="alpha", state=TaskState.PAUSED)])
+            resumed = await client.resume_task(1)
+            assert resumed["state"] == TaskState.IN_PROGRESS.value
+            assert context.restore_calls == []
+        finally:
+            await app.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_done_task_captures_with_done_trigger(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        context = FakeContext()
+        client, app = await _build_mode("local", tmp_path / "local", context)
+        try:
+            await client.add_task(title="alpha")
+            await client.start_task(1)
+            await client.done_task()
+
+            assert context.capture_calls[-1] == (1, "DONE")
+            assert context.snapshots[1].capture_trigger == "DONE"
+        finally:
+            await app.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_resume_task_payload_stays_state_focused_after_restore(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        context = FakeContext()
+        client, app = await _build_mode("local", tmp_path / "local", context)
+        try:
+            await client.add_task(title="alpha")
+            await client.start_task(1)
+            await client.pause_task()
+
+            result = await client.resume_task(1)
+            assert set(result) == {"id", "title", "state"}
+            assert result["state"] == TaskState.IN_PROGRESS.value
+            assert context.restore_calls[-1] == 1
+        finally:
+            await app.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_start_task_reports_restore_degradation_and_notifies(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        context = FakeContext()
+        client, app = await _build_mode("local", tmp_path / "local", context)
+        notifier = RecordingNotifier()
+        app.notifications.register(notifier)
+
+        try:
+            await client.add_task(title="alpha")
+            context.snapshots[1] = Snapshot(
+                task_id=1,
+                active_file="/tmp/file-1.py",
+                source_plugin="fake",
+                capture_trigger="PAUSE",
+                session_duration_sec=120,
+            )
+
+            result = await client.start_task(1)
+
+            assert result["restored_window"] is None
+            assert result["restore_report"]["failed"] == ["active_window"]
+            assert result["restore_report"]["user_message"] is not None
+            assert notifier.records
+            assert notifier.records[-1].level == NotifyLevel.WARNING
         finally:
             await app.shutdown()
 

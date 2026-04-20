@@ -15,9 +15,11 @@ Phase 5 升级：
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
-from flow_engine.context.base_plugin import ContextPlugin
+from flow_engine.context.base_plugin import ContextPlugin, Snapshot
+from flow_engine.context.trail import TrailCollector, TrailEvent
 
 logger = logging.getLogger(__name__)
 
@@ -111,3 +113,38 @@ class ActivityWatchPlugin(ContextPlugin):
         except Exception:
             logger.debug("failed to fetch from bucket %s", bucket_id)
         return {}
+
+
+class ActivityWatchTrailCollector(TrailCollector):
+    """Translate captured AW snapshot fields into passive trail events."""
+
+    @property
+    def source_name(self) -> str:
+        return "activitywatch"
+
+    async def collect(self, task_id: int, snapshot: Snapshot) -> list[TrailEvent]:
+        sources = {item.strip() for item in snapshot.source_plugin.split(",") if item.strip()}
+        if sources and self.source_name not in sources:
+            return []
+
+        events: list[TrailEvent] = []
+        now = snapshot.timestamp if snapshot.timestamp else datetime.now()
+        if snapshot.active_window:
+            events.append(TrailEvent(
+                task_id=task_id,
+                timestamp=now,
+                source=self.source_name,
+                event_type="window_focus",
+                summary=snapshot.active_window,
+                metadata={"active_window": snapshot.active_window},
+            ))
+        if snapshot.active_url:
+            events.append(TrailEvent(
+                task_id=task_id,
+                timestamp=now,
+                source=self.source_name,
+                event_type="url_visit",
+                summary=snapshot.active_url,
+                metadata={"active_url": snapshot.active_url},
+            ))
+        return events

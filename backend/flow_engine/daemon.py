@@ -185,6 +185,9 @@ class FlowDaemon:
         self._ipc.register("task.block", self._handle_task_block)
         self._ipc.register("task.breakdown", self._handle_task_breakdown)
         self._ipc.register("task.export", self._handle_task_export)
+        self._ipc.register("mount.add", self._handle_mount_add)
+        self._ipc.register("mount.remove", self._handle_mount_remove)
+        self._ipc.register("mount.list", self._handle_mount_list)
         self._ipc.register("templates.list", self._handle_templates_list)
         self._ipc.register("plugins.list", self._handle_plugins_list)
         self._ipc.register("status", self._handle_status)
@@ -291,6 +294,33 @@ class FlowDaemon:
             tasks = [t for t in tasks if not t.is_terminal]
         return exporter.export(tasks)
 
+    async def _handle_mount_add(self, params: dict[str, Any]) -> dict[str, Any]:
+        mounts = self._require_mounts()
+        task_id = await self._resolve_mount_task_id(params.get("task_id"))
+        path_or_url = params.get("path_or_url")
+        note = params.get("note", "")
+        kind, path, url = self._infer_mount_target(path_or_url, note)
+        item = await asyncio.to_thread(
+            mounts.add,
+            task_id,
+            kind,
+            path=path,
+            url=url,
+            note=note,
+        )
+        return item.to_dict()
+
+    async def _handle_mount_remove(self, params: dict[str, Any]) -> bool:
+        mounts = self._require_mounts()
+        task_id = await self._resolve_mount_task_id(params.get("task_id"))
+        return await asyncio.to_thread(mounts.remove, task_id, params["mount_id"])
+
+    async def _handle_mount_list(self, params: dict[str, Any]) -> list[dict[str, Any]]:
+        mounts = self._require_mounts()
+        task_id = await self._resolve_mount_task_id(params.get("task_id"))
+        items = await asyncio.to_thread(mounts.list, task_id)
+        return [item.to_dict() for item in items]
+
     async def _handle_templates_list(self, params: dict[str, Any]) -> list[tuple[str, str]]:
         """列出可用模板."""
         return self._app.templates.list_all()
@@ -307,6 +337,33 @@ class FlowDaemon:
                     "description": plugin.manifest.description,
                 })
         return result
+
+    def _require_mounts(self):
+        mounts = getattr(self._app, "mounts", None)
+        if mounts is None:
+            raise ValueError("mount 功能未启用")
+        return mounts
+
+    async def _resolve_mount_task_id(self, task_id: int | None) -> int:
+        if task_id is not None:
+            return int(task_id)
+        status = await self._task_flow.get_status()
+        active = status.get("active")
+        if not active:
+            raise ValueError("当前没有进行中的任务，请使用 --task 指定任务")
+        return int(active["id"])
+
+    @staticmethod
+    def _infer_mount_target(path_or_url: str | None, note: str):
+        from flow_engine.context.mounts import MountKind
+
+        if not path_or_url and not note:
+            raise ValueError("mount 需要提供 path/url 或 --note")
+        if not path_or_url:
+            return MountKind.NOTE, "", ""
+        if path_or_url.startswith(("http://", "https://")):
+            return MountKind.URL, "", path_or_url
+        return MountKind.FILE, path_or_url, ""
 
     # ── 事件总线 → IPC 广播 ──
 

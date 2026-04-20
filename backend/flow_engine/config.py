@@ -48,6 +48,8 @@ class PathsConfig:
     tasks_file: str = "tasks.md"  # 相对于 data_dir
     snapshots_dir: str = "snapshots"
     templates_dir: str = "templates"
+    mounts_dir: str = "mounts"
+    trails_dir: str = "trails"
 
     @property
     def templates_path(self) -> Path:
@@ -60,6 +62,14 @@ class PathsConfig:
     @property
     def snapshots_path(self) -> Path:
         return self.data_dir / self.snapshots_dir
+
+    @property
+    def mounts_path(self) -> Path:
+        return self.data_dir / self.mounts_dir
+
+    @property
+    def trails_path(self) -> Path:
+        return self.data_dir / self.trails_dir
 
 
 @dataclass
@@ -97,6 +107,10 @@ class ContextConfig:
     enabled: bool = True
     activitywatch_url: str = "http://localhost:5600"
     capture_on_switch: bool = True
+    trail_enabled: bool = True
+    mount_enabled: bool = True
+    trails_dir: str = "trails"
+    mounts_dir: str = "mounts"
 
 
 @dataclass
@@ -257,8 +271,13 @@ def load_config(config_path: Path | None = None) -> AppConfig:
 
     config = _env_override(config)
 
+    config.paths.mounts_dir = config.context.mounts_dir
+    config.paths.trails_dir = config.context.trails_dir
+
     # 确保数据目录存在
     config.paths.data_dir.mkdir(parents=True, exist_ok=True)
     config.paths.snapshots_path.mkdir(parents=True, exist_ok=True)
+    config.paths.mounts_path.mkdir(parents=True, exist_ok=True)
+    config.paths.trails_path.mkdir(parents=True, exist_ok=True)
 
     return config

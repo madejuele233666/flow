@@ -101,6 +101,24 @@ class FlowClient(Protocol):
         """列出已注册插件，返回 [{name, version, description}, ...]."""
         ...
 
+    async def add_mount(
+        self,
+        path_or_url: str | None = None,
+        *,
+        note: str = "",
+        task_id: int | None = None,
+    ) -> dict[str, Any]:
+        """挂载文件、URL 或备注到任务."""
+        ...
+
+    async def remove_mount(self, mount_id: str, *, task_id: int | None = None) -> bool:
+        """移除挂载项."""
+        ...
+
+    async def list_mounts(self, *, task_id: int | None = None) -> list[dict[str, Any]]:
+        """列出任务挂载项."""
+        ...
+
 
 # ---------------------------------------------------------------------------
 # LocalClient — 直连 FlowApp 的本地适配器
@@ -231,6 +249,37 @@ class LocalClient:
                 })
         return result
 
+    async def add_mount(
+        self,
+        path_or_url: str | None = None,
+        *,
+        note: str = "",
+        task_id: int | None = None,
+    ) -> dict[str, Any]:
+        mounts = self._require_mounts()
+        resolved_task_id = await self._resolve_mount_task_id(task_id)
+        kind, path, url = self._infer_mount_target(path_or_url, note)
+        item = await asyncio.to_thread(
+            mounts.add,
+            resolved_task_id,
+            kind,
+            path=path,
+            url=url,
+            note=note,
+        )
+        return item.to_dict()
+
+    async def remove_mount(self, mount_id: str, *, task_id: int | None = None) -> bool:
+        mounts = self._require_mounts()
+        resolved_task_id = await self._resolve_mount_task_id(task_id)
+        return await asyncio.to_thread(mounts.remove, resolved_task_id, mount_id)
+
+    async def list_mounts(self, *, task_id: int | None = None) -> list[dict[str, Any]]:
+        mounts = self._require_mounts()
+        resolved_task_id = await self._resolve_mount_task_id(task_id)
+        items = await asyncio.to_thread(mounts.list, resolved_task_id)
+        return [item.to_dict() for item in items]
+
     # ── 内部工具 ──
 
     @staticmethod
@@ -239,6 +288,33 @@ class LocalClient:
         if task is None:
             raise ValueError(f"未找到任务 #{task_id}")
         return task
+
+    def _require_mounts(self):
+        mounts = getattr(self._app, "mounts", None)
+        if mounts is None:
+            raise ValueError("mount 功能未启用")
+        return mounts
+
+    async def _resolve_mount_task_id(self, task_id: int | None) -> int:
+        if task_id is not None:
+            return task_id
+        status = await self.get_status()
+        active = status.get("active")
+        if not active:
+            raise ValueError("当前没有进行中的任务，请使用 --task 指定任务")
+        return int(active["id"])
+
+    @staticmethod
+    def _infer_mount_target(path_or_url: str | None, note: str):
+        from flow_engine.context.mounts import MountKind
+
+        if not path_or_url and not note:
+            raise ValueError("mount 需要提供 path/url 或 --note")
+        if not path_or_url:
+            return MountKind.NOTE, "", ""
+        if path_or_url.startswith(("http://", "https://")):
+            return MountKind.URL, "", path_or_url
+        return MountKind.FILE, path_or_url, ""
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +399,26 @@ class RemoteClient:
 
     async def list_plugins(self) -> list[dict[str, Any]]:
         return await self._ipc.call("plugins.list")
+
+    async def add_mount(
+        self,
+        path_or_url: str | None = None,
+        *,
+        note: str = "",
+        task_id: int | None = None,
+    ) -> dict[str, Any]:
+        return await self._ipc.call(
+            "mount.add",
+            path_or_url=path_or_url,
+            note=note,
+            task_id=task_id,
+        )
+
+    async def remove_mount(self, mount_id: str, *, task_id: int | None = None) -> bool:
+        return await self._ipc.call("mount.remove", mount_id=mount_id, task_id=task_id)
+
+    async def list_mounts(self, *, task_id: int | None = None) -> list[dict[str, Any]]:
+        return await self._ipc.call("mount.list", task_id=task_id)
 
 
 # ---------------------------------------------------------------------------

@@ -298,6 +298,64 @@ async def resume(client: FlowClient, task_id: int) -> None:
 
 
 # ---------------------------------------------------------------------------
+# flow mount / unmount / mounts
+# ---------------------------------------------------------------------------
+
+@main.command()
+@click.pass_obj
+@click.argument("path_or_url", required=False)
+@click.option("--note", default="", help="附加备注；留空时可创建 note-only mount")
+@click.option("--task", "task_id", default=None, type=int, help="目标任务 ID；默认当前活跃任务")
+async def mount(client: FlowClient, path_or_url: str | None, note: str, task_id: int | None) -> None:
+    """挂载文件、URL 或备注到任务."""
+    try:
+        item = await client.add_mount(path_or_url, note=note, task_id=task_id)
+    except ValueError as e:
+        click.echo(f"❌ {e}")
+        raise SystemExit(1)
+    target = item.get("path") or item.get("url") or item.get("note") or "(empty)"
+    click.echo(f"📎 已挂载: {item['id']} [{item['kind']}] {target}")
+
+
+@main.command("unmount")
+@click.pass_obj
+@click.argument("mount_id")
+@click.option("--task", "task_id", default=None, type=int, help="目标任务 ID；默认当前活跃任务")
+async def unmount(client: FlowClient, mount_id: str, task_id: int | None) -> None:
+    """移除任务挂载项."""
+    try:
+        removed = await client.remove_mount(mount_id, task_id=task_id)
+    except ValueError as e:
+        click.echo(f"❌ {e}")
+        raise SystemExit(1)
+    if not removed:
+        click.echo(f"❌ 未找到挂载项: {mount_id}")
+        raise SystemExit(1)
+    click.echo(f"🗑️  已移除挂载项: {mount_id}")
+
+
+@main.command("mounts")
+@click.pass_obj
+@click.option("--task", "task_id", default=None, type=int, help="目标任务 ID；默认当前活跃任务")
+async def mounts_cmd(client: FlowClient, task_id: int | None) -> None:
+    """列出任务挂载项."""
+    try:
+        items = await client.list_mounts(task_id=task_id)
+    except ValueError as e:
+        click.echo(f"❌ {e}")
+        raise SystemExit(1)
+
+    if not items:
+        click.echo("📭 当前任务没有挂载项")
+        return
+
+    for item in items:
+        target = item.get("path") or item.get("url") or item.get("note") or "(empty)"
+        pinned = " pinned" if item.get("pinned") else ""
+        click.echo(f"📎 {item['id']} [{item['kind']}] {target}{pinned}")
+
+
+# ---------------------------------------------------------------------------
 # flow breakdown
 # ---------------------------------------------------------------------------
 

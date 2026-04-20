@@ -23,6 +23,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from flow_engine.context.trail import TrailCollector, TrailEvent, TrailStore
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,8 +38,17 @@ class Snapshot:
 
     task_id: int
     timestamp: datetime = field(default_factory=datetime.now)
+    schema_version: int = 2
     active_window: str = ""
     active_url: str = ""
+    active_file: str = ""
+    active_workspace: str = ""
+    open_windows: list[str] = field(default_factory=list)
+    open_tabs: list[str] = field(default_factory=list)
+    open_files: list[str] = field(default_factory=list)
+    source_plugin: str = ""
+    capture_trigger: str = ""
+    session_duration_sec: int = 0
     extra: dict[str, Any] = field(default_factory=dict)
 
     @staticmethod
@@ -50,10 +61,27 @@ class Snapshot:
         data = dict(raw)  # 浅拷贝，避免破坏调用方的数据
         return Snapshot(
             task_id=task_id,
+            schema_version=int(data.pop("schema_version", 2)),
             active_window=data.pop("active_window", ""),
             active_url=data.pop("active_url", ""),
+            active_file=data.pop("active_file", ""),
+            active_workspace=data.pop("active_workspace", ""),
+            open_windows=_coerce_list(data.pop("open_windows", [])),
+            open_tabs=_coerce_list(data.pop("open_tabs", [])),
+            open_files=_coerce_list(data.pop("open_files", [])),
+            source_plugin=data.pop("source_plugin", ""),
+            capture_trigger=data.pop("capture_trigger", ""),
+            session_duration_sec=int(data.pop("session_duration_sec", 0) or 0),
             extra=data,
         )
+
+
+def _coerce_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if value in (None, ""):
+        return []
+    return [str(value)]
 
 
 # ---------------------------------------------------------------------------
@@ -128,11 +156,21 @@ class SnapshotManager:
             return None
 
         data = json.loads(files[0].read_text(encoding="utf-8"))
+        schema_version = int(data.get("schema_version", 1))
         return Snapshot(
             task_id=data["task_id"],
             timestamp=datetime.fromisoformat(data["timestamp"]),
+            schema_version=schema_version,
             active_window=data.get("active_window", ""),
             active_url=data.get("active_url", ""),
+            active_file=data.get("active_file", ""),
+            active_workspace=data.get("active_workspace", ""),
+            open_windows=_coerce_list(data.get("open_windows", [])),
+            open_tabs=_coerce_list(data.get("open_tabs", [])),
+            open_files=_coerce_list(data.get("open_files", [])),
+            source_plugin=data.get("source_plugin", ""),
+            capture_trigger=data.get("capture_trigger", ""),
+            session_duration_sec=int(data.get("session_duration_sec", 0) or 0),
             extra=data.get("extra", {}),
         )
 
@@ -157,39 +195,58 @@ class ContextService:
         snapshot = await svc.capture_async(task_id=1)
     """
 
-    def __init__(self, snapshot_manager: SnapshotManager) -> None:
+    def __init__(
+        self,
+        snapshot_manager: SnapshotManager,
+        *,
+        trail_store: TrailStore | None = None,
+    ) -> None:
         self._manager = snapshot_manager
+        self._trail_store = trail_store
         self._plugins: list[ContextPlugin] = []
+        self._collectors: list[TrailCollector] = []
 
     def register(self, plugin: ContextPlugin) -> None:
         """注册一个捕获插件."""
         self._plugins.append(plugin)
         logger.info("context plugin registered: %s", plugin.name)
 
-    async def capture_async(self, task_id: int) -> Snapshot:
+    def register_collector(self, collector: TrailCollector) -> None:
+        self._collectors.append(collector)
+        logger.info("trail collector registered: %s", collector.source_name)
+
+    async def capture_async(self, task_id: int, *, capture_trigger: str = "") -> Snapshot:
         """并发聚合所有可用插件的捕获结果，返回合并的快照.
 
         每个插件互相隔离执行，单个失败不影响其余。
         """
         merged: dict[str, Any] = {}
+        contributors: list[str] = []
 
-        async def _try_capture(plugin: ContextPlugin) -> dict[str, Any]:
+        async def _try_capture(plugin: ContextPlugin) -> tuple[str, dict[str, Any]]:
             """安全地尝试捕获单个插件的上下文."""
             try:
                 if await plugin.available():
-                    return await plugin.capture()
+                    return plugin.name, await plugin.capture()
             except Exception:
                 logger.exception("plugin %s capture failed", plugin.name)
-            return {}
+            return plugin.name, {}
 
         # 全部插件并发执行，互不阻塞
         results = await asyncio.gather(
             *[_try_capture(p) for p in self._plugins],
         )
-        for data in results:
+        for plugin_name, data in results:
+            if data:
+                contributors.append(plugin_name)
             merged.update(data)
+        if contributors and "source_plugin" not in merged:
+            merged["source_plugin"] = ",".join(contributors)
+        if capture_trigger:
+            merged["capture_trigger"] = capture_trigger
 
         snapshot = Snapshot.build(task_id, merged)
+        await self._write_trails(task_id, snapshot)
         # 快照落盘走线程池，不阻塞事件循环
         await asyncio.to_thread(self._manager.save, snapshot)
         return snapshot
@@ -197,3 +254,28 @@ class ContextService:
     def restore_latest(self, task_id: int) -> Snapshot | None:
         """恢复某任务最新保存的快照."""
         return self._manager.load_latest(task_id)
+
+    async def _write_trails(self, task_id: int, snapshot: Snapshot) -> None:
+        if self._trail_store is None or not self._collectors:
+            return
+
+        events: list[TrailEvent] = []
+        for collector in self._collectors:
+            try:
+                events.extend(await collector.collect(task_id, snapshot))
+            except Exception:
+                logger.exception("trail collector %s failed", collector.source_name)
+
+        if not events:
+            return
+
+        try:
+            await asyncio.to_thread(self._append_trails, events)
+        except Exception:
+            logger.exception("trail write failed for task #%s", task_id)
+
+    def _append_trails(self, events: list[TrailEvent]) -> None:
+        if self._trail_store is None:
+            return
+        for event in events:
+            self._trail_store.append(event)

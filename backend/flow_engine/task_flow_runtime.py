@@ -9,6 +9,9 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from flow_engine.context.policy import CaptureRestorePolicy, CaptureTrigger
+from flow_engine.context.recovery import RESTORE_PRIORITY, RecoveryPriority, RestoreResult
+from flow_engine.notifications.base import NotifyLevel
 from flow_engine.state.machine import TaskState
 
 if TYPE_CHECKING:
@@ -31,10 +34,12 @@ class TaskFlowRuntime:
         *,
         on_task_started: _StartCallback | None = None,
         on_task_stopped: _StopCallback | None = None,
+        policy: CaptureRestorePolicy | None = None,
     ) -> None:
         self._app = app
         self._on_task_started = on_task_started
         self._on_task_stopped = on_task_stopped
+        self._policy = policy or CaptureRestorePolicy()
         self._lock = asyncio.Lock()
 
     async def add_task(
@@ -94,26 +99,29 @@ class TaskFlowRuntime:
             start_target = await self._app.engine.prepare_transition(task, TaskState.IN_PROGRESS)
 
             auto_paused = await self._app.engine.ensure_single_active(tasks, task_id)
-            await self._capture_many(auto_paused)
+            await self._capture_many(auto_paused, CaptureTrigger.AUTO_PAUSE)
             await self._app.engine.commit_transition(task, start_target)
             task.started_at = datetime.now()
             await self._app.repo.save_all(tasks)
             await self._auto_commit_state(task)
 
-            restored_window = await self._restore_window(task.id)
+            restore_result = await self._restore_context(task.id, CaptureTrigger.START)
         await self._invoke_started(task.id)
         return {
             **self._task_state_payload(task),
             "paused": [paused.id for paused in auto_paused],
-            "restored_window": restored_window,
+            "restored_window": restore_result.restored.get("active_window"),
+            "restore_report": restore_result.to_dict(),
         }
 
     async def done_task(self) -> dict[str, Any]:
         async with self._lock:
             tasks = await self._app.repo.load_all()
             active = self._require_single_active(tasks)
+            done_target = await self._app.engine.prepare_transition(active, TaskState.DONE)
 
-            await self._app.engine.transition(active, TaskState.DONE)
+            await self._capture_one(active, CaptureTrigger.DONE)
+            await self._app.engine.commit_transition(active, done_target)
             await self._app.repo.save_all(tasks)
             await self._auto_commit_state(active)
         await self._invoke_stopped()
@@ -123,9 +131,10 @@ class TaskFlowRuntime:
         async with self._lock:
             tasks = await self._app.repo.load_all()
             active = self._require_single_active(tasks)
+            pause_target = await self._app.engine.prepare_transition(active, TaskState.PAUSED)
 
-            await self._capture_one(active)
-            await self._app.engine.transition(active, TaskState.PAUSED)
+            await self._capture_one(active, CaptureTrigger.PAUSE)
+            await self._app.engine.commit_transition(active, pause_target)
             await self._app.repo.save_all(tasks)
             await self._auto_commit_state(active)
         await self._invoke_stopped()
@@ -151,7 +160,7 @@ class TaskFlowRuntime:
                 resume_target = await self._app.engine.prepare_transition(task, TaskState.IN_PROGRESS)
 
             auto_paused = await self._app.engine.ensure_single_active(tasks, task_id)
-            await self._capture_many(auto_paused)
+            await self._capture_many(auto_paused, CaptureTrigger.AUTO_PAUSE)
 
             if unblock_target is not None:
                 await self._app.engine.commit_transition(task, unblock_target)
@@ -162,7 +171,7 @@ class TaskFlowRuntime:
             await self._app.repo.save_all(tasks)
             await self._auto_commit_state(task)
 
-            await self._restore_window(task.id)
+            await self._restore_context(task.id, CaptureTrigger.RESUME)
         await self._invoke_started(task.id)
         return self._task_state_payload(task)
 
@@ -170,11 +179,10 @@ class TaskFlowRuntime:
         async with self._lock:
             tasks = await self._app.repo.load_all()
             task = self._find(tasks, task_id)
+            block_target = await self._app.engine.prepare_transition(task, TaskState.BLOCKED)
 
-            if task.state == TaskState.IN_PROGRESS:
-                await self._capture_one(task)
-
-            await self._app.engine.transition(task, TaskState.BLOCKED)
+            await self._capture_one(task, CaptureTrigger.BLOCK)
+            await self._app.engine.commit_transition(task, block_target)
             task.block_reason = reason
             await self._app.repo.save_all(tasks)
             await self._auto_commit_state(task)
@@ -252,32 +260,101 @@ class TaskFlowRuntime:
         elapsed = (datetime.now() - task.started_at).total_seconds() / 60
         return elapsed >= self._app.config.focus.break_interval_minutes
 
-    async def _capture_many(self, tasks: list[Task]) -> None:
+    async def _capture_many(self, tasks: list[Task], trigger: CaptureTrigger) -> None:
+        if not tasks:
+            return
         for task in tasks:
-            await self._capture_one(task)
+            await self._capture_one(task, trigger)
 
-    async def _capture_one(self, task: Task) -> Snapshot | None:
+    async def _capture_one(self, task: Task, trigger: CaptureTrigger) -> Snapshot | None:
         context = getattr(self._app, "context", None)
-        if context is None or not self._app.config.context.capture_on_switch:
+        if (
+            context is None
+            or not self._app.config.context.capture_on_switch
+            or not self._policy.should_capture(trigger, current_state=task.state)
+        ):
             return None
         try:
-            return await context.capture_async(task.id)
+            return await context.capture_async(task.id, capture_trigger=trigger.value)
         except Exception:
             logger.exception("context capture failed for task #%s", task.id)
             return None
 
-    async def _restore_window(self, task_id: int) -> str | None:
+    async def _restore_context(self, task_id: int, trigger: CaptureTrigger) -> RestoreResult:
         context = getattr(self._app, "context", None)
-        if context is None:
-            return None
+        if (
+            context is None
+            or not self._app.config.context.capture_on_switch
+            or not self._policy.should_restore(trigger)
+        ):
+            return RestoreResult.empty(task_id)
         try:
             snapshot = await asyncio.to_thread(context.restore_latest, task_id)
         except Exception:
-            logger.exception("context restore failed for task #%s", task_id)
-            return None
+            logger.warning("context restore failed for task #%s", task_id, exc_info=True)
+            return RestoreResult.empty(task_id)
         if snapshot is None:
-            return None
-        return snapshot.active_window or None
+            return RestoreResult.empty(task_id)
+
+        result = RestoreResult(task_id=task_id)
+        recoverable_present = False
+        display_only_present = False
+
+        for field_name, priority in RESTORE_PRIORITY.items():
+            value = getattr(snapshot, field_name, None)
+            if not self._has_context_value(value):
+                continue
+
+            result.restored[field_name] = value
+            if priority in (RecoveryPriority.MUST_RESTORE, RecoveryPriority.BEST_EFFORT):
+                recoverable_present = True
+            elif priority == RecoveryPriority.DISPLAY_ONLY:
+                display_only_present = True
+
+        if not recoverable_present and not display_only_present:
+            return result
+
+        if not recoverable_present and display_only_present:
+            result.user_message = "No recoverable context is available; only recorded metadata was found."
+            self._notify_restore_result(result, NotifyLevel.INFO)
+            return result
+
+        for field_name, priority in RESTORE_PRIORITY.items():
+            if field_name in result.restored:
+                continue
+            if priority == RecoveryPriority.MUST_RESTORE:
+                result.failed.append(field_name)
+            elif priority == RecoveryPriority.BEST_EFFORT:
+                result.degraded.append(field_name)
+
+        if result.failed:
+            result.user_message = (
+                "Could not fully restore context: "
+                + ", ".join(sorted(result.failed))
+            )
+            self._notify_restore_result(result, NotifyLevel.WARNING)
+            return result
+
+        return result
+
+    @staticmethod
+    def _has_context_value(value: Any) -> bool:
+        if isinstance(value, list):
+            return bool(value)
+        return bool(value)
+
+    def _notify_restore_result(self, result: RestoreResult, level: NotifyLevel) -> None:
+        if result.user_message is None:
+            return
+        try:
+            self._app.notifications.notify(
+                title="上下文恢复",
+                body=result.user_message,
+                level=level,
+                extra={"restore_report": result.to_dict()},
+            )
+        except Exception:
+            logger.exception("restore notification failed for task #%s", result.task_id)
 
     async def _auto_commit(self, message: str) -> None:
         if not self._app.config.git.auto_commit:
