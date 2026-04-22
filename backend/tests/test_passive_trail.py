@@ -31,6 +31,21 @@ class FixedPlugin(ContextPlugin):
         }
 
 
+class SourceOverridePlugin(ContextPlugin):
+    @property
+    def name(self) -> str:
+        return "vscode"
+
+    async def available(self) -> bool:
+        return True
+
+    async def capture(self) -> dict[str, object]:
+        return {
+            "active_file": "/tmp/override.py",
+            "source_plugin": "vscode",
+        }
+
+
 class FixedCollector(TrailCollector):
     @property
     def source_name(self) -> str:
@@ -115,6 +130,24 @@ def test_activitywatch_collector_produces_trail_events(tmp_path: Path) -> None:
         await service.capture_async(3, capture_trigger="START")
 
         events = store.query(3)
+        assert [event.event_type for event in events] == ["window_focus", "url_visit"]
+        assert all(event.source == "activitywatch" for event in events)
+
+    asyncio.run(scenario())
+
+
+def test_activitywatch_collector_survives_multi_plugin_source_overrides(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store = TrailStore(tmp_path / "trails")
+        service = ContextService(SnapshotManager(tmp_path / "snapshots"), trail_store=store)
+        service.register(FixedPlugin(name="activitywatch"))
+        service.register(SourceOverridePlugin())
+        service.register_collector(ActivityWatchTrailCollector())
+
+        snapshot = await service.capture_async(7, capture_trigger="START")
+
+        assert snapshot.source_plugin == "activitywatch,vscode"
+        events = store.query(7)
         assert [event.event_type for event in events] == ["window_focus", "url_visit"]
         assert all(event.source == "activitywatch" for event in events)
 

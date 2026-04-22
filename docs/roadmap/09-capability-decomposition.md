@@ -40,6 +40,23 @@
 - 显式/隐式挂载产品体验
 - 成熟的恢复插件生态
 
+### 浏览器场景恢复的细分边界
+
+这一块后续必须拆成三类能力，而不能继续用“网页恢复”一句话带过：
+
+- `active_url`
+  - 用于表达主活动页恢复
+- `open_tabs`
+  - 用于表达 bounded multi-page session restore
+- `recent_tabs`
+  - 用于表达回看、提示与 fallback，不自动等同于恢复计划
+
+如果这三者不拆开，后续很容易出现：
+
+- capture 记录的是时间序列
+- restore 执行的是单页 reopen
+- HUD 却误写成“多页面已恢复”
+
 ## 二. Single-Task Protocol And State Model
 
 ### 愿景保留

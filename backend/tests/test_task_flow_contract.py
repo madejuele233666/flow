@@ -653,10 +653,12 @@ def test_start_task_reports_restore_degradation_and_notifies(tmp_path: Path) -> 
             await client.add_task(title="alpha")
             context.snapshots[1] = Snapshot(
                 task_id=1,
+                active_window="window-1",
                 active_file="/tmp/file-1.py",
                 source_plugin="fake",
                 capture_trigger="PAUSE",
                 session_duration_sec=120,
+                extra={"restore_failed_fields": ["active_window"]},
             )
 
             result = await client.start_task(1)

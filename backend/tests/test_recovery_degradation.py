@@ -92,34 +92,51 @@ def test_recovery_degradation_levels_and_failure_isolation(tmp_path: Path) -> No
             assert full["restore_report"]["user_message"] is None
             await client.done_task()
 
-            await client.add_task(title="partial")
+            await client.add_task(title="activitywatch-default")
             context.snapshots[2] = Snapshot(
                 task_id=2,
                 active_window="window-2",
-                active_file="/tmp/file-2.py",
-                active_workspace="/tmp/workspace-2",
-                open_windows=[],
-                open_tabs=[],
-                open_files=["/tmp/file-2.py"],
-                active_url="",
-                source_plugin="fake",
+                active_url="https://example.com/2",
+                source_plugin="activitywatch",
                 capture_trigger="PAUSE",
                 session_duration_sec=30,
             )
-            partial = await client.start_task(2)
+            aw_default = await client.start_task(2)
+            assert aw_default["restore_report"]["failed"] == []
+            assert aw_default["restore_report"]["degraded"] == []
+            assert aw_default["restore_report"]["user_message"] is None
+            assert not notifier.records
+            await client.done_task()
+
+            await client.add_task(title="partial")
+            context.snapshots[3] = Snapshot(
+                task_id=3,
+                active_window="window-3",
+                active_file="/tmp/file-3.py",
+                active_workspace="/tmp/workspace-3",
+                open_windows=["window-3"],
+                open_tabs=["tab-3"],
+                open_files=["/tmp/file-3.py"],
+                active_url="https://example.com/3",
+                source_plugin="fake",
+                capture_trigger="PAUSE",
+                session_duration_sec=30,
+                extra={"restore_degraded_fields": ["open_windows", "open_tabs", "active_url"]},
+            )
+            partial = await client.start_task(3)
             assert partial["restore_report"]["failed"] == []
             assert set(partial["restore_report"]["degraded"]) == {"open_windows", "open_tabs", "active_url"}
             assert partial["restore_report"]["user_message"] is None
             await client.done_task()
 
             await client.add_task(title="display-only")
-            context.snapshots[3] = Snapshot(
-                task_id=3,
+            context.snapshots[4] = Snapshot(
+                task_id=4,
                 source_plugin="fake",
                 capture_trigger="PAUSE",
                 session_duration_sec=30,
             )
-            display_only = await client.start_task(3)
+            display_only = await client.start_task(4)
             assert display_only["restore_report"]["failed"] == []
             assert display_only["restore_report"]["degraded"] == []
             assert display_only["restore_report"]["user_message"] is not None
@@ -127,9 +144,9 @@ def test_recovery_degradation_levels_and_failure_isolation(tmp_path: Path) -> No
             await client.done_task()
 
             await client.add_task(title="empty")
-            empty = await client.start_task(4)
+            empty = await client.start_task(5)
             assert empty["restore_report"] == {
-                "task_id": 4,
+                "task_id": 5,
                 "restored": {},
                 "degraded": [],
                 "failed": [],
@@ -138,11 +155,11 @@ def test_recovery_degradation_levels_and_failure_isolation(tmp_path: Path) -> No
             await client.done_task()
 
             await client.add_task(title="restore-error")
-            context.fail_restore_for.add(5)
-            restore_error = await client.start_task(5)
+            context.fail_restore_for.add(6)
+            restore_error = await client.start_task(6)
             assert restore_error["state"] == "In Progress"
             assert restore_error["restore_report"] == {
-                "task_id": 5,
+                "task_id": 6,
                 "restored": {},
                 "degraded": [],
                 "failed": [],

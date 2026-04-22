@@ -84,6 +84,27 @@ def _coerce_list(value: Any) -> list[str]:
     return [str(value)]
 
 
+def _coerce_plugin_tokens(value: Any) -> list[str]:
+    if isinstance(value, list):
+        raw_items = value
+    elif value in (None, ""):
+        raw_items = []
+    else:
+        raw_items = str(value).split(",")
+    return [str(item).strip() for item in raw_items if str(item).strip()]
+
+
+def _merge_source_plugins(contributors: list[str], raw_value: Any) -> str:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for token in [*contributors, *_coerce_plugin_tokens(raw_value)]:
+        if token in seen:
+            continue
+        seen.add(token)
+        ordered.append(token)
+    return ",".join(ordered)
+
+
 # ---------------------------------------------------------------------------
 # 插件抽象基类 — 全异步合约
 # ---------------------------------------------------------------------------
@@ -240,8 +261,9 @@ class ContextService:
             if data:
                 contributors.append(plugin_name)
             merged.update(data)
-        if contributors and "source_plugin" not in merged:
-            merged["source_plugin"] = ",".join(contributors)
+        normalized_sources = _merge_source_plugins(contributors, merged.get("source_plugin"))
+        if normalized_sources:
+            merged["source_plugin"] = normalized_sources
         if capture_trigger:
             merged["capture_trigger"] = capture_trigger
 

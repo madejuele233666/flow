@@ -33,21 +33,23 @@
 
 ### 当前代码基线
 
-- `ContextService`、`SnapshotManager`、`ActivityWatchPlugin` 已接入。
-- `TaskFlowRuntime` 当前会在 `pause` 与 `start / resume` 的 auto-pause 场景执行 capture，并在 `start / resume` 路径执行 restore。
-- 当前快照模型仍偏基础，只覆盖少量上下文字段。
+- `Snapshot` 已扩成带 `schema_version` 的语义模型，核心字段按 Active / Restorable / Record-Only 分层，不再依赖宽泛的 `extra`。
+- `CaptureRestorePolicy` 已成为 capture / restore 时机的单一事实来源；`done_task` 也会产生最终 snapshot。
+- `MountService` 与 `flow mount / unmount / mounts` 已把显式挂载从快照中解耦出来。
+- `TrailStore` / `TrailCollector` 已把 passive context trail 纳入主 context path，`ActivityWatchPlugin` 是默认 collector。
+- `RestoreResult`、恢复优先级与分级降级已经落地；`start_task` 会返回 `restore_report`，失败不会破坏主任务流。
 
 ### 下一阶段里程碑
 
-- 扩充 snapshot 数据模型，而不是继续依赖宽泛的 `extra`。
-- 明确 capture / restore 在 start、pause、resume、auto-pause 下的行为。
-- 明确“显式挂载内容”和“隐式捕获内容”的边界。
-- 逐步把 passive trail 这类能力纳入上下文系统，而不是单独再造第二套记录系统。
+- 抽出执行式恢复边界与 MVP support matrix，让 `restore_report` 不再只是语义层结果。
+- 让 HUD、CLI 和后续 report 真正消费 `restore_report`、显式挂载与 trail，而不是把这些语义只留在 backend payload 里。
+- 继续压实插件互操作与字段分类边界，避免新上下文字段重新回流到宽泛的 `extra`。
+- 让上下文能力服务真实产品动作，例如恢复提示、挂载浏览、轨迹回看，而不是另造一套平行体验层。
 
 ### 退出标准
 
 - 切回任务时，系统恢复的不只是任务标题，而是核心工作现场。
-- 恢复失败时能清楚降级，不会污染主任务流。
+- 恢复结果、显式挂载和被动轨迹已经进入产品表层，而不是只停在存储和 runtime payload。
 
 ## Workstream C：HUD Experience
 
@@ -57,11 +59,13 @@
 - `HudApp` 已收口 transition、widget registration、plugin setup / teardown。
 - `TaskStatusController` 已能稳定表达 `active / empty / offline`。
 - HUD V1 的失败教训和几项关键技术结论都有历史复盘可用。
+- Gate B 已经产出 `restore_report`、显式挂载和被动轨迹，但 HUD 还没有把这些输入变成用户可见语义。
+- 真正的执行式恢复边界仍未形成，因此 HUD 现在还无法稳定表达“实际恢复了什么”。
 
 ### 下一阶段里程碑
 
 - 在现有 runtime 上继续做产品化，而不是另起一套 HUD 架构。
-- 扩展 task-status 的状态表达、布局和交互，而不是只堆更多控件。
+- 先接住 B2 固定下来的动作级恢复结果，再把 `restore_report`、mount summary、trail summary 接进 task-status 信息结构。
 - 把 hover、提醒、轻量控制这类交互能力挂在既有 event / widget / state runtime 上。
 - 逐步引入来自原始愿景文档的目标体验：
   - hover-to-interact
@@ -71,6 +75,7 @@
 ### 退出标准
 
 - HUD 看起来不再像技术验证件，而像可交付产品。
+- 用户已经能从 HUD 直接感知恢复结果、挂载入口和轨迹入口。
 - 视觉与交互增强没有把状态机、IPC、动画、输入监听重新搅回一个模块。
 
 ## Workstream D：AI Assistance
@@ -154,7 +159,8 @@
 ### 当前代码基线
 
 - `GitLedger` 已存在，并已接入后端。
-- 当前还没有自动心流报表、被动上下文轨迹或消息网关的直接实现。
+- `TrailStore` / `TrailCollector` 与默认的 `ActivityWatchPlugin` collector 已经提供 task-bound passive context trail。
+- 当前还没有自动心流报表或消息网关的直接实现。
 - 可复用的底座主要是：
   - 任务流 runtime
   - context system
@@ -163,8 +169,7 @@
 
 ### 下一阶段里程碑
 
-- 把 passive context trail 放进主产品数据模型。
-- 定义零点击复盘所需的最小数据面，而不是先做漂亮报表。
+- 基于既有 passive context trail 定义零点击复盘所需的最小数据面，而不是先做漂亮报表。
 - 评估消息网关接入，但让它复用既有 task-flow / IPC / service semantics，而不是另起控制面。
 
 ### 路线判断

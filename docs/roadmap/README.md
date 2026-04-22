@@ -1,6 +1,6 @@
 # Flow 路线图总览
 
-状态基线：2026-04-17
+状态基线：2026-04-22
 
 这个目录是当前文档真相面，但其中只有一部分内容是在陈述“今天已经实现了什么”。
 
@@ -43,6 +43,7 @@
 
 - [11-horizon-a-day-use.md](./11-horizon-a-day-use.md)
 - [12-horizon-b-context-recovery.md](./12-horizon-b-context-recovery.md)
+- [12b-horizon-b2-executable-recovery.md](./12b-horizon-b2-executable-recovery.md)
 - [13-horizon-c-hud-productization.md](./13-horizon-c-hud-productization.md)
 - [14-horizon-d-ai-assistance.md](./14-horizon-d-ai-assistance.md)
 - [15-horizon-e-platform-and-delivery.md](./15-horizon-e-platform-and-delivery.md)
@@ -53,6 +54,10 @@
 - [05-document-map.md](./05-document-map.md)
 - 如果你要看 Gate A 的 repo-owned 日用操作面，看：
   [docs/day-use/README.md](../day-use/README.md)
+
+如果你要看 browser/AW 的单机实机验证记录，看：
+
+- [verification/aw-browser-capture-validation.md](./verification/aw-browser-capture-validation.md)
 
 如果你要看后续设计应继续依赖哪些结构锚点，看：
 
@@ -80,7 +85,13 @@
 
 按同一标准看，Flow 还没有到终局产品：
 
-- 上下文恢复还停留在快照基础能力
+- 上下文恢复的后端基线已经形成
+  - semantic snapshot、capture / restore policy、显式挂载、被动轨迹、恢复降级策略都已落地
+- browser/AW 的实机抓取链路已经做过小范围验证
+  - 见 [verification/aw-browser-capture-validation.md](./verification/aw-browser-capture-validation.md)
+- 现在最直接的下一步不是直接做更复杂的 HUD，而是先完成 Horizon B2 的执行式恢复边界
+- 然后再让 Horizon C 把 B / B2 的结果接进 HUD
+- 但这些语义还没有被 HUD / AI / 自动复盘完整消费
 - HUD 目前仍是 task-status MVP
 - AI 仍是配置位与 stub
 - 插件和交付路径都已有底座

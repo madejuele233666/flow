@@ -299,17 +299,27 @@ class TaskFlowRuntime:
         result = RestoreResult(task_id=task_id)
         recoverable_present = False
         display_only_present = False
+        failed_hints = self._restore_field_hints(snapshot, "restore_failed_fields")
+        degraded_hints = self._restore_field_hints(snapshot, "restore_degraded_fields")
 
         for field_name, priority in RESTORE_PRIORITY.items():
             value = getattr(snapshot, field_name, None)
             if not self._has_context_value(value):
                 continue
 
-            result.restored[field_name] = value
             if priority in (RecoveryPriority.MUST_RESTORE, RecoveryPriority.BEST_EFFORT):
                 recoverable_present = True
             elif priority == RecoveryPriority.DISPLAY_ONLY:
                 display_only_present = True
+
+            if field_name in failed_hints and priority == RecoveryPriority.MUST_RESTORE:
+                result.failed.append(field_name)
+                continue
+            if field_name in degraded_hints and priority == RecoveryPriority.BEST_EFFORT:
+                result.degraded.append(field_name)
+                continue
+
+            result.restored[field_name] = value
 
         if not recoverable_present and not display_only_present:
             return result
@@ -318,14 +328,6 @@ class TaskFlowRuntime:
             result.user_message = "No recoverable context is available; only recorded metadata was found."
             self._notify_restore_result(result, NotifyLevel.INFO)
             return result
-
-        for field_name, priority in RESTORE_PRIORITY.items():
-            if field_name in result.restored:
-                continue
-            if priority == RecoveryPriority.MUST_RESTORE:
-                result.failed.append(field_name)
-            elif priority == RecoveryPriority.BEST_EFFORT:
-                result.degraded.append(field_name)
 
         if result.failed:
             result.user_message = (
@@ -342,6 +344,17 @@ class TaskFlowRuntime:
         if isinstance(value, list):
             return bool(value)
         return bool(value)
+
+    @staticmethod
+    def _restore_field_hints(snapshot: Snapshot, key: str) -> set[str]:
+        raw = snapshot.extra.get(key, [])
+        if isinstance(raw, list):
+            values = raw
+        elif raw in (None, ""):
+            values = []
+        else:
+            values = [raw]
+        return {str(item) for item in values if str(item)}
 
     def _notify_restore_result(self, result: RestoreResult, level: NotifyLevel) -> None:
         if result.user_message is None:

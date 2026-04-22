@@ -118,6 +118,17 @@
 - `hud-plugin-runtime-lifecycle`
 - `hud-widget-composition-runtime`
 - `hud-transition-runtime`
+
+## F. 路线验证记录层
+
+这些文档是 roadmap 相关的验证样本、实机记录或阶段验证证据。
+它们可以支持路线判断，但不能自动提升为“已经完成的产品能力”。
+
+- `docs/roadmap/verification/validation-summary.md`
+  - 角色：verification loop 汇总
+- `docs/roadmap/verification/aw-browser-capture-validation.md`
+  - 角色：AW / browser capture 的单机实机验证记录
+  - 说明：只证明链路在样本机器上可行，不等于最终实现已经完成
 - `hud-task-status-mvp`
 - `plugin-system`
 - `hud-payload-integrity`

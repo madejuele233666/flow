@@ -1,12 +1,12 @@
 # 当前状态
 
-状态基线：2026-04-17
+状态基线：2026-04-20
 
 这份文件只记录代码、测试和现行规格已经能支撑的结论。
 
 ## 一句话判断
 
-Flow 已经有了可验证的后端主任务流、可用的 IPC V2 边界、Windows HUD 的 task-status MVP，以及已经发布并验证过的 Gate A day-use 文档；但上下文恢复、HUD 产品化、AI、分发与生态都还没有完成。
+Flow 已经有了可验证的后端主任务流、可用的 IPC V2 边界、Windows HUD 的 task-status MVP、已经发布并验证过的 Gate A day-use 文档，以及已通过验证的 Gate B context recovery baseline；但 HUD 产品化、AI、分发与生态都还没有完成。
 
 ## 已验证事实
 
@@ -51,29 +51,33 @@ Flow 已经有了可验证的后端主任务流、可用的 IPC V2 边界、Wind
 - 当前日用主链真正稳定暴露给用户的，主要还是 `Ready / In Progress / Paused / Blocked / Done` 这一组路径。
 - “八维状态模型已定义”不等于“八维产品体验已经全部完成”。
 
-### 4. 上下文系统已经接入主链，但范围仍然有限
+### 4. 上下文系统已经接入主链，并形成 Gate B 基线
 
 基于 `backend/flow_engine/app.py`、`backend/flow_engine/context/base_plugin.py`、`backend/flow_engine/context/aw_plugin.py`，现在可以确认：
 
 - `FlowApp` 会在 context 启用时注册 `ActivityWatchPlugin`。
 - `ContextService` 是 capture 的统一入口。
-- `SnapshotManager` 已负责快照落盘与恢复。
-- 当前快照模型仍然很小，核心字段只有 `active_window`、`active_url` 和 `extra`。
+- `SnapshotManager` 已负责带 `schema_version` 的 snapshot 落盘与恢复。
+- `Snapshot` 已按 Active / Restorable / Record-Only 三层建模，核心字段不再依赖 `extra`。
+- `CaptureRestorePolicy` 已成为 capture / restore 时机的单一事实来源，`done_task` 也会 capture。
+- `MountService`、`TrailStore`、`TrailCollector` 已把显式挂载和被动轨迹纳入主 context path。
+- `RestoreResult`、`RecoveryPriority` 和四级 degradation chain 已形成，恢复失败不会打断主任务流。
 
-这说明“快照底座”已存在，但“完整工作现场恢复”还没有实现。
+这说明 Flow 已经不再停留在“快照底座”阶段，而是形成了可验证的 context recovery baseline；但“完整工作现场恢复的产品体验”还没有实现。
 
-### 5. Git 持久化底座已经存在，但自动复盘与轨迹还没产品化
+### 5. Git 持久化底座已经存在，轨迹基线已形成，但自动复盘还没产品化
 
 基于 `backend/flow_engine/storage/git_ledger.py`、`backend/flow_engine/app.py` 和 `backend/tests/test_task_flow_contract.py`，现在可以确认：
 
 - `GitLedger` 已经是后端的版本控制实现。
 - `FlowApp` 会把它接入主应用。
 - 启用 git auto-commit 时，状态变更已经可以被自动提交验证覆盖。
+- passive context trail 已有 task-bound backend baseline，但仍停留在基础数据面。
 
 今天还不能声称的是：
 
 - 自动心流报表已经存在
-- 被动上下文轨迹已经形成产品能力
+- 被动上下文轨迹已经形成完整回看产品能力
 - Git 账本已经等于完整的数据层体验
 
 ### 6. IPC V2 已实现并有跨端测试面
@@ -123,18 +127,18 @@ Flow 已经有了可验证的后端主任务流、可用的 IPC V2 边界、Wind
 
 今天已经有的是：
 
-- capture / restore 入口
-- ActivityWatch 集成
-- 快照落盘
-- 主链降级处理
+- semantic snapshot model
+- declarative capture / restore policy
+- 显式挂载与被动轨迹的 backend baseline
+- 恢复优先级与主链降级处理
 
 今天还不能声称的是：
 
 - 完整桌面现场恢复
-- 稳定的恢复优先级策略
-- 丰富的快照语义模型
-- 显式/隐式挂载已经形成成熟产品体验
+- HUD / CLI / report 已经完整消费这些语义
+- 显式挂载已经形成成熟产品体验
 - 被动轨迹与回放产品体验
+- 浏览器多页面恢复已经可用；当前仍主要停留在单 `active_url` 语义与时间序列记录
 
 ### 2. HUD 还是 MVP，不是终局界面
 
@@ -212,11 +216,11 @@ Flow 已经有了可验证的后端主任务流、可用的 IPC V2 边界、Wind
 ## 明确仍属于未来目标的部分
 
 - 完整上下文恢复
-- 显式/隐式挂载能力
+- 显式/隐式挂载的产品化入口
 - 更成熟的 HUD 交互与视觉系统
 - 柔性 Flowtime 提醒
 - 时间压迫感视觉化 HUD
-- 自动心流报表与被动上下文轨迹
+- 自动心流报表与被动轨迹回看
 - AI 任务拆解与下一跳建议
 - 参考插件矩阵与对外生态叙事
 - 外部消息网关接入
@@ -231,4 +235,4 @@ Flow 已经有了可验证的后端主任务流、可用的 IPC V2 边界、Wind
 2. 可日用
 3. 有完整产品感
 
-Flow 现在已经明确拥有第 1 层的大部分关键件，正在逼近第 2 层，但还没有进入第 3 层。
+Flow 现在已经明确拥有第 1 层关键件，并在 Gate A / Gate B 上建立了第 2 层基线；但还没有进入第 3 层的完整产品感。

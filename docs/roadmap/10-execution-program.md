@@ -1,6 +1,6 @@
 # 10. 执行总图
 
-状态基线：2026-04-17
+状态基线：2026-04-22
 
 这份文件不是愿景文档，也不是现状文档。
 它回答的是另一个问题：
@@ -47,15 +47,16 @@
 
 这样可以防止愿景不断外溢，把路线重新拉回大泥球。
 
-## 二. 从现状到终局的六道阶段门
+## 二. 从现状到终局的七道阶段门
 
-整条路线分成六道连续的阶段门。
+整条路线分成七道连续的阶段门。
 后一道门默认建立在前一道门已经通过的前提上。
 
 ```text
 当前代码基线
   -> Gate A: 单机日用闭环
   -> Gate B: 上下文恢复成形
+  -> Gate B2: 执行式恢复成形
   -> Gate C: HUD 产品化
   -> Gate D: AI 增强接入
   -> Gate E: 插件与交付稳固
@@ -63,7 +64,7 @@
   -> 北极星产品
 ```
 
-## 三. 六道阶段门的真实含义
+## 三. 七道阶段门的真实含义
 
 ### Gate A：单机日用闭环
 
@@ -91,13 +92,35 @@
 - 显式挂载与隐式捕获边界明确
 - 恢复失败时有清楚降级路径
 
-如果 Gate B 没过，HUD 只能展示状态，AI 也拿不到足够有价值的上下文。
+当前状态：
+
+- Gate B 相关 specs 已同步到 `openspec/specs/`，实现验证已完成并归档到 `openspec/changes/archive/2026-04-20-horizon-b-context-recovery/`。
+- 当前基线已包括 semantic snapshot model、declarative capture / restore policy、explicit mounts、passive trail、recovery degradation strategy。
+- browser/AW 的单机抓取链路也已有实机验证记录：
+  - [verification/aw-browser-capture-validation.md](./verification/aw-browser-capture-validation.md)
+- 因此 Gate B 已不再是推测性的“待实现阶段”；后续工作应转向消费这些语义，而不是重做上下文底座。
+
+Gate B 之所以关键，是因为如果这道门不存在，HUD 只能展示状态，AI 也拿不到足够有价值的上下文。
+
+### Gate B2：执行式恢复成形
+
+通过标准：
+
+- 恢复执行边界已经独立存在
+- MVP 支持矩阵已经固定
+- 至少一组真实恢复动作已经可运行
+- `restore_report` 已能表达动作级结果
+- 恢复失败与不支持场景有稳定降级
+
+如果 Gate B2 没过，HUD 最多只能展示“恢复语义”，但无法稳定表达“真正恢复了什么”。
 
 ### Gate C：HUD 产品化
 
 通过标准：
 
 - HUD 不再只是 task-status MVP
+- `restore_report`、挂载与轨迹入口已经进入 HUD 产品语义
+- HUD 也已消费执行式恢复结果，而不是只停留在语义恢复报告
 - 交互、状态表达、提醒能力已开始形成产品层
 - 所有增强仍然挂在现有 runtime 上
 
@@ -166,7 +189,7 @@
 
 ## 五. 每个阶段都必须同时回答的五个问题
 
-后面的 11-16 号文档都会按同一个模板展开。
+后面的 11-16 号文档与 `12b` 文档都会按同一个模板展开。
 
 ### 1. 这个阶段的目标是什么
 
@@ -197,13 +220,14 @@
 把用户这次的要求落成执行标准后，更准确的目标不是“再写更长的路线图”，而是补齐下面这组文档：
 
 - 一份执行总图
-- 六份阶段 playbook
+- 七份阶段 playbook
 - 每份都能从当前代码基线出发，一步步照做
 
 对应文件如下：
 
 - [11-horizon-a-day-use.md](./11-horizon-a-day-use.md)
 - [12-horizon-b-context-recovery.md](./12-horizon-b-context-recovery.md)
+- [12b-horizon-b2-executable-recovery.md](./12b-horizon-b2-executable-recovery.md)
 - [13-horizon-c-hud-productization.md](./13-horizon-c-hud-productization.md)
 - [14-horizon-d-ai-assistance.md](./14-horizon-d-ai-assistance.md)
 - [15-horizon-e-platform-and-delivery.md](./15-horizon-e-platform-and-delivery.md)
