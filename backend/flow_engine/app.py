@@ -19,14 +19,17 @@ Phase 5 升级：
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from typing import Any
 
 from flow_engine.config import AppConfig, load_config
 from flow_engine.context.aw_plugin import ActivityWatchPlugin, ActivityWatchTrailCollector
 from flow_engine.context.base_plugin import ContextService, SnapshotManager
+from flow_engine.context.browser_session import (
+    ActivityWatchBrowserSessionProvider,
+    BrowserSessionContextPlugin,
+)
 from flow_engine.context.mounts import MountService
+from flow_engine.context.recovery_execution import RecoveryExecutionService
 from flow_engine.context.trail import TrailStore
 from flow_engine.events import BackgroundEventWorker, EventBus, EventType
 from flow_engine.hooks import HookManager
@@ -147,6 +150,16 @@ class FlowApp:
             self.context.register(
                 ActivityWatchPlugin(self.config.context.activitywatch_url)
             )
+            self.context.register(
+                BrowserSessionContextPlugin(
+                    ActivityWatchBrowserSessionProvider(
+                        self.config.context.activitywatch_url,
+                        max_pages=self.config.context.browser_restore_max_pages,
+                        lookback_minutes=self.config.context.browser_segment_lookback_minutes,
+                        segment_gap_seconds=self.config.context.browser_segment_gap_seconds,
+                    )
+                )
+            )
         if self.config.context.trail_enabled:
             self.context.register_collector(ActivityWatchTrailCollector())
         self.mounts = (
@@ -156,6 +169,10 @@ class FlowApp:
             )
             if self.config.context.mount_enabled
             else None
+        )
+        self.recovery = RecoveryExecutionService(
+            execution_enabled=self.config.context.restore_execution_enabled,
+            command_timeout_seconds=self.config.context.restore_command_timeout_seconds,
         )
 
         # ── 调度层（组合式排序器） ──

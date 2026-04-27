@@ -109,6 +109,11 @@ class ContextConfig:
     capture_on_switch: bool = True
     trail_enabled: bool = True
     mount_enabled: bool = True
+    restore_execution_enabled: bool = False
+    browser_restore_max_pages: int = 5
+    browser_segment_lookback_minutes: int = 60
+    browser_segment_gap_seconds: int = 5
+    restore_command_timeout_seconds: float = 2.0
     trails_dir: str = "trails"
     mounts_dir: str = "mounts"
 

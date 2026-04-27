@@ -12,11 +12,41 @@
 | Operation | Canonical payload | Notes |
 | --- | --- | --- |
 | `add` | `id`, `title`, `priority`, `state` | Plain add returns one task payload. Template add wraps the same payload shape under `tasks[]` plus `template`. |
-| `start` | `id`, `title`, `state`, `paused`, `restored_window` | `paused` lists auto-paused task ids. `restored_window` is a runtime-owned operator hint and may be `null`. |
+| `start` | `id`, `title`, `state`, `paused`, `restore_report` | `paused` lists auto-paused task ids. `restore_report` is the canonical executable recovery report v2. |
 | `pause` | `id`, `title`, `state` | No adapter-specific fields are added. |
 | `block` | `id`, `title`, `state`, `reason` | `reason` is canonical block metadata, not HUD-only copy. |
-| `resume` | `id`, `title`, `state` | `resume` is state-focused. It does not publish a second restore-hint contract. |
+| `resume` | `id`, `title`, `state`, `restore_report` | `resume` publishes the same executable recovery report v2 contract as `start`. |
 | `done` | `id`, `title`, `state` | Terminal transition result only. |
+
+## Canonical `restore_report` V2 Payload
+
+Top-level report fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `version` | `int` | Report schema version; B2 uses `2`. |
+| `task_id` | `int` | Task being restored. |
+| `overall_status` | `str` | One of `empty`, `skipped`, `executed`, `partial`, `failed`, or `unsupported`. |
+| `execution_enabled` | `bool` | Whether real restore side effects were allowed by config. |
+| `actions` | `list[object]` | Planned action outcomes. Empty when no restorable context exists. |
+| `browser_session` | `object` | Browser-session summary, including provenance when inferred from ActivityWatch. |
+| `user_message` | `str \| null` | Optional user-facing degradation message. |
+
+Action fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `id` | `str` | Stable action identifier within the report. |
+| `type` | `str` | Action type such as `open_url`, `open_file`, `open_workspace`, or `focus_window`. |
+| `field` | `str` | Snapshot field that produced the action. |
+| `role` | `str` | Product role such as `active`, `secondary`, `workspace`, or `focus`. |
+| `target` | `str` | URL, file, workspace, or window title target. |
+| `status` | `str` | `skipped`, `executed`, `failed`, or `unsupported`. |
+| `reason` | `str` | Empty on success; otherwise stable degradation reason. |
+| `source` | `str` | Capture/provider source or provenance. |
+| `priority` | `str` | Recovery priority inherited from context semantics. |
+
+`restored_window` is no longer a top-level lifecycle payload field. Window focus, when available, is represented as a `focus_window` action in `restore_report.actions`.
 
 ## Canonical `status` Payload
 
@@ -53,6 +83,7 @@ If any required field is missing or malformed, HUD must degrade to `offline` rat
 Canonical cross-entrypoint fields:
 
 - All lifecycle payload fields listed above
+- All `restore_report` v2 fields listed above
 - All `status` business fields listed above
 
 Entrypoint-local or transport-only fields:
@@ -79,7 +110,8 @@ Rule:
 | Daemon offline | Transport degradation | Remote adapter cannot reach daemon. | User-visible degradation |
 | Protocol mismatch | Transport degradation | IPC hello or framing contract does not match. | User-visible degradation and log detail |
 | Malformed `status` payload | Transport degradation | `status` payload cannot satisfy canonical contract. | HUD-visible degradation and log detail |
-| Snapshot capture / restore failure | Degraded side effect | Context capture or restore failed, but task-flow transition still completed. | Log-only; keep business payload stable |
+| Snapshot capture / restore failure | Degraded side effect | Context capture or restore failed, but task-flow transition still completed. | Log-only plus `restore_report` degradation where available |
+| Restore action skipped / unsupported / failed | Degraded side effect | Executable recovery did not complete all planned actions. | `restore_report` and optional notification |
 
 ## Cross-Entrypoint Error-Presentation Matrix
 
@@ -91,7 +123,8 @@ Rule:
 | Daemon offline | Not applicable to local mode. | Surface unavailable/degraded outcome; do not recast as task state. | Render canonical `offline` state. |
 | Protocol mismatch | Not applicable to local mode. | Surface degraded connection failure; keep protocol fragments out of primary copy. | Render canonical `offline` state and keep protocol detail log-only. |
 | Malformed `status` payload | Not applicable to local mode. | Treat as degraded transport/result contract failure. | Render canonical `offline` state; do not guess fields. |
-| Snapshot capture / restore failure | Keep lifecycle result successful if transition succeeded. | Same behavior after RPC transport. | Not applicable; HUD should only consume published result. |
+| Snapshot capture / restore failure | Keep lifecycle result successful if transition succeeded; inspect `restore_report`. | Same behavior after RPC transport. | Task-status remains driven by `status`; other HUD surfaces may consume `restore_report` later. |
+| Restore action skipped / unsupported / failed | Keep lifecycle result successful if transition succeeded; summarize `restore_report` in product language. | Preserve report fields after RPC transport. | Task-status ignores this report in Gate B2. |
 
 Primary contract rule:
 

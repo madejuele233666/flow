@@ -11,6 +11,12 @@ from flow_engine.app import FlowApp
 from flow_engine.client import LocalClient, RemoteClient, create_client
 from flow_engine.config import AppConfig
 from flow_engine.context.base_plugin import Snapshot
+from flow_engine.context.recovery_execution import (
+    RecoveryAction,
+    RecoveryActionType,
+    RecoveryExecutionService,
+    RecoveryExecutorRegistry,
+)
 from flow_engine.notifications.base import Notification, Notifier, NotifyLevel
 from flow_engine.daemon import FlowDaemon
 from flow_engine.events import EventType
@@ -101,6 +107,27 @@ class RecordingNotifier(Notifier):
         return True
 
 
+class FailingExecutor:
+    async def execute(self, action: RecoveryAction) -> tuple[bool, str]:
+        return False, "forced failure"
+
+
+def _assert_report_v2(report: dict, *, task_id: int, status: str | None = None) -> None:
+    assert set(report) == {
+        "version",
+        "task_id",
+        "overall_status",
+        "execution_enabled",
+        "actions",
+        "browser_session",
+        "user_message",
+    }
+    assert report["version"] == 2
+    assert report["task_id"] == task_id
+    if status is not None:
+        assert report["overall_status"] == status
+
+
 def _build_app(tmp_path: Path, context: FakeContext | None = None, *, safe_mode: bool = True) -> FlowApp:
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -156,9 +183,9 @@ def test_local_and_daemon_lifecycle_payloads_stay_in_parity(tmp_path: Path) -> N
 
             local_start = await local.start_task(1)
             daemon_start = await daemon.start_task(1)
-            assert set(local_start) == {"id", "title", "state", "paused", "restored_window", "restore_report"}
+            assert set(local_start) == {"id", "title", "state", "paused", "restore_report"}
             assert local_start == daemon_start
-            assert set(local_start["restore_report"]) == {"task_id", "restored", "degraded", "failed", "user_message"}
+            _assert_report_v2(local_start["restore_report"], task_id=1)
 
             local_status = await local.get_status()
             daemon_status = await daemon.get_status()
@@ -173,8 +200,9 @@ def test_local_and_daemon_lifecycle_payloads_stay_in_parity(tmp_path: Path) -> N
 
             local_resume = await local.resume_task(1)
             daemon_resume = await daemon.resume_task(1)
-            assert set(local_resume) == {"id", "title", "state"}
+            assert set(local_resume) == {"id", "title", "state", "restore_report"}
             assert local_resume == daemon_resume
+            _assert_report_v2(local_resume["restore_report"], task_id=1)
 
             local_block = await local.block_task(1, reason="waiting")
             daemon_block = await daemon.block_task(1, reason="waiting")
@@ -183,7 +211,7 @@ def test_local_and_daemon_lifecycle_payloads_stay_in_parity(tmp_path: Path) -> N
 
             local_resume_blocked = await local.resume_task(1)
             daemon_resume_blocked = await daemon.resume_task(1)
-            assert set(local_resume_blocked) == {"id", "title", "state"}
+            assert set(local_resume_blocked) == {"id", "title", "state", "restore_report"}
             assert local_resume_blocked == daemon_resume_blocked
             assert local_resume_blocked["state"] == TaskState.IN_PROGRESS.value
 
@@ -423,12 +451,16 @@ def test_start_snapshot_paths_degrade_without_breaking_task_flow(tmp_path: Path)
             await adapter.add_task(title="alpha")
 
             first_start = await adapter.start_task(1)
-            assert first_start["restored_window"] is None
+            _assert_report_v2(first_start["restore_report"], task_id=1, status="empty")
 
             await adapter.pause_task()
             second_start = await adapter.start_task(1)
-            assert second_start["restored_window"] == "window-1"
-            assert second_start["restore_report"]["restored"]["active_window"] == "window-1"
+            _assert_report_v2(second_start["restore_report"], task_id=1, status="skipped")
+            assert {action["field"] for action in second_start["restore_report"]["actions"]} >= {
+                "active_window",
+                "active_file",
+                "active_workspace",
+            }
 
             await adapter.pause_task()
             context.fail_capture_for.add(1)
@@ -438,14 +470,7 @@ def test_start_snapshot_paths_degrade_without_breaking_task_flow(tmp_path: Path)
             context.fail_restore_for.add(1)
 
             restore_failure = await adapter.start_task(1)
-            assert restore_failure["restored_window"] is None
-            assert restore_failure["restore_report"] == {
-                "task_id": 1,
-                "restored": {},
-                "degraded": [],
-                "failed": [],
-                "user_message": None,
-            }
+            _assert_report_v2(restore_failure["restore_report"], task_id=1, status="empty")
             assert (await adapter.get_status())["active"]["id"] == 1
         finally:
             if isinstance(adapter, DaemonAdapter):
@@ -592,13 +617,13 @@ def test_capture_on_switch_false_disables_restore_for_start_and_resume(tmp_path:
             )
 
             started = await client.start_task(1)
-            assert started["restored_window"] is None
-            assert started["restore_report"]["restored"] == {}
+            _assert_report_v2(started["restore_report"], task_id=1, status="empty")
             assert context.restore_calls == []
 
             await app.repo.save_all([Task(id=1, title="alpha", state=TaskState.PAUSED)])
             resumed = await client.resume_task(1)
             assert resumed["state"] == TaskState.IN_PROGRESS.value
+            _assert_report_v2(resumed["restore_report"], task_id=1, status="empty")
             assert context.restore_calls == []
         finally:
             await app.shutdown()
@@ -633,8 +658,9 @@ def test_resume_task_payload_stays_state_focused_after_restore(tmp_path: Path) -
             await client.pause_task()
 
             result = await client.resume_task(1)
-            assert set(result) == {"id", "title", "state"}
+            assert set(result) == {"id", "title", "state", "restore_report"}
             assert result["state"] == TaskState.IN_PROGRESS.value
+            _assert_report_v2(result["restore_report"], task_id=1)
             assert context.restore_calls[-1] == 1
         finally:
             await app.shutdown()
@@ -648,23 +674,23 @@ def test_start_task_reports_restore_degradation_and_notifies(tmp_path: Path) -> 
         client, app = await _build_mode("local", tmp_path / "local", context)
         notifier = RecordingNotifier()
         app.notifications.register(notifier)
+        registry = RecoveryExecutorRegistry()
+        registry.register(RecoveryActionType.OPEN_URL, FailingExecutor())
+        app.recovery = RecoveryExecutionService(execution_enabled=True, registry=registry)
 
         try:
             await client.add_task(title="alpha")
             context.snapshots[1] = Snapshot(
                 task_id=1,
-                active_window="window-1",
-                active_file="/tmp/file-1.py",
+                active_url="https://example.com/fail",
                 source_plugin="fake",
                 capture_trigger="PAUSE",
                 session_duration_sec=120,
-                extra={"restore_failed_fields": ["active_window"]},
             )
 
             result = await client.start_task(1)
 
-            assert result["restored_window"] is None
-            assert result["restore_report"]["failed"] == ["active_window"]
+            _assert_report_v2(result["restore_report"], task_id=1, status="failed")
             assert result["restore_report"]["user_message"] is not None
             assert notifier.records
             assert notifier.records[-1].level == NotifyLevel.WARNING

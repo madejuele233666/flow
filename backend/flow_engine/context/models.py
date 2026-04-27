@@ -20,6 +20,7 @@ FIELD_CLASSIFICATION: dict[str, ContextKind] = {
     "active_workspace": ContextKind.ACTIVE,
     "open_windows": ContextKind.RESTORABLE,
     "open_tabs": ContextKind.RESTORABLE,
+    "recent_tabs": ContextKind.RECORD_ONLY,
     "open_files": ContextKind.RESTORABLE,
     "source_plugin": ContextKind.RECORD_ONLY,
     "capture_trigger": ContextKind.RECORD_ONLY,

@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from flow_engine.context.policy import CaptureRestorePolicy, CaptureTrigger
-from flow_engine.context.recovery import RESTORE_PRIORITY, RecoveryPriority, RestoreResult
+from flow_engine.context.recovery_execution import RecoveryReport
 from flow_engine.notifications.base import NotifyLevel
 from flow_engine.state.machine import TaskState
 
@@ -110,7 +110,6 @@ class TaskFlowRuntime:
         return {
             **self._task_state_payload(task),
             "paused": [paused.id for paused in auto_paused],
-            "restored_window": restore_result.restored.get("active_window"),
             "restore_report": restore_result.to_dict(),
         }
 
@@ -171,9 +170,12 @@ class TaskFlowRuntime:
             await self._app.repo.save_all(tasks)
             await self._auto_commit_state(task)
 
-            await self._restore_context(task.id, CaptureTrigger.RESUME)
+            restore_result = await self._restore_context(task.id, CaptureTrigger.RESUME)
         await self._invoke_started(task.id)
-        return self._task_state_payload(task)
+        return {
+            **self._task_state_payload(task),
+            "restore_report": restore_result.to_dict(),
+        }
 
     async def block_task(self, task_id: int, reason: str = "") -> dict[str, Any]:
         async with self._lock:
@@ -280,83 +282,44 @@ class TaskFlowRuntime:
             logger.exception("context capture failed for task #%s", task.id)
             return None
 
-    async def _restore_context(self, task_id: int, trigger: CaptureTrigger) -> RestoreResult:
+    async def _restore_context(self, task_id: int, trigger: CaptureTrigger) -> RecoveryReport:
         context = getattr(self._app, "context", None)
         if (
             context is None
             or not self._app.config.context.capture_on_switch
             or not self._policy.should_restore(trigger)
         ):
-            return RestoreResult.empty(task_id)
+            return RecoveryReport.empty(
+                task_id,
+                execution_enabled=self._app.config.context.restore_execution_enabled,
+            )
         try:
             snapshot = await asyncio.to_thread(context.restore_latest, task_id)
         except Exception:
             logger.warning("context restore failed for task #%s", task_id, exc_info=True)
-            return RestoreResult.empty(task_id)
-        if snapshot is None:
-            return RestoreResult.empty(task_id)
-
-        result = RestoreResult(task_id=task_id)
-        recoverable_present = False
-        display_only_present = False
-        failed_hints = self._restore_field_hints(snapshot, "restore_failed_fields")
-        degraded_hints = self._restore_field_hints(snapshot, "restore_degraded_fields")
-
-        for field_name, priority in RESTORE_PRIORITY.items():
-            value = getattr(snapshot, field_name, None)
-            if not self._has_context_value(value):
-                continue
-
-            if priority in (RecoveryPriority.MUST_RESTORE, RecoveryPriority.BEST_EFFORT):
-                recoverable_present = True
-            elif priority == RecoveryPriority.DISPLAY_ONLY:
-                display_only_present = True
-
-            if field_name in failed_hints and priority == RecoveryPriority.MUST_RESTORE:
-                result.failed.append(field_name)
-                continue
-            if field_name in degraded_hints and priority == RecoveryPriority.BEST_EFFORT:
-                result.degraded.append(field_name)
-                continue
-
-            result.restored[field_name] = value
-
-        if not recoverable_present and not display_only_present:
-            return result
-
-        if not recoverable_present and display_only_present:
-            result.user_message = "No recoverable context is available; only recorded metadata was found."
-            self._notify_restore_result(result, NotifyLevel.INFO)
-            return result
-
-        if result.failed:
-            result.user_message = (
-                "Could not fully restore context: "
-                + ", ".join(sorted(result.failed))
+            return RecoveryReport.empty(
+                task_id,
+                execution_enabled=self._app.config.context.restore_execution_enabled,
             )
+        recovery = getattr(self._app, "recovery", None)
+        if recovery is None:
+            return RecoveryReport.empty(
+                task_id,
+                execution_enabled=self._app.config.context.restore_execution_enabled,
+            )
+        try:
+            result = await recovery.restore(task_id, snapshot)
+        except Exception:
+            logger.warning("context recovery execution failed for task #%s", task_id, exc_info=True)
+            return RecoveryReport.empty(
+                task_id,
+                execution_enabled=self._app.config.context.restore_execution_enabled,
+            )
+        if result.user_message:
             self._notify_restore_result(result, NotifyLevel.WARNING)
-            return result
-
         return result
 
-    @staticmethod
-    def _has_context_value(value: Any) -> bool:
-        if isinstance(value, list):
-            return bool(value)
-        return bool(value)
-
-    @staticmethod
-    def _restore_field_hints(snapshot: Snapshot, key: str) -> set[str]:
-        raw = snapshot.extra.get(key, [])
-        if isinstance(raw, list):
-            values = raw
-        elif raw in (None, ""):
-            values = []
-        else:
-            values = [raw]
-        return {str(item) for item in values if str(item)}
-
-    def _notify_restore_result(self, result: RestoreResult, level: NotifyLevel) -> None:
+    def _notify_restore_result(self, result: RecoveryReport, level: NotifyLevel) -> None:
         if result.user_message is None:
             return
         try:

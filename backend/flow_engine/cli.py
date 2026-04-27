@@ -25,14 +25,12 @@ CLI 不再直接触碰 repo / engine，统一通过 FlowClient Protocol 交互�
 
 from __future__ import annotations
 
-import sys
 import asyncio
-from datetime import datetime
+import sys
 
 import asyncclick as click
 
 from flow_engine.client import FlowClient, create_client
-from flow_engine.state.machine import TaskState
 
 
 # ---------------------------------------------------------------------------
@@ -197,8 +195,8 @@ async def start(client: FlowClient, task_id: int) -> None:
     for pid in result.get("paused", []):
         click.echo(f"⏸️  已自动暂停: #{pid}")
 
-    if result.get("restored_window"):
-        click.echo(f"📸 上次现场: {result['restored_window']}")
+    if summary := _restore_report_summary(result.get("restore_report")):
+        click.echo(summary)
 
     click.echo(f"🚀 开始: #{result['id']} {result['title']}")
 
@@ -294,6 +292,8 @@ async def resume(client: FlowClient, task_id: int) -> None:
     except ValueError as e:
         click.echo(f"❌ {e}")
         return
+    if summary := _restore_report_summary(result.get("restore_report")):
+        click.echo(summary)
     click.echo(f"▶️  已恢复: #{result['id']} {result['title']} → {result['state']}")
 
 
@@ -519,6 +519,27 @@ def _state_icon_str(state_value: str) -> str:
         "Done": "✅",
         "Canceled": "❌",
     }.get(state_value, "❓")
+
+
+def _restore_report_summary(report: object) -> str:
+    if not isinstance(report, dict) or report.get("version") != 2:
+        return ""
+    status = report.get("overall_status")
+    if status in (None, "empty"):
+        return ""
+    actions = report.get("actions")
+    action_count = len(actions) if isinstance(actions, list) else 0
+    if status == "skipped":
+        return f"📸 已记录可恢复现场，恢复执行未启用（{action_count} 项）"
+    if status == "executed":
+        return f"📸 已恢复现场（{action_count} 项）"
+    if status == "partial":
+        return f"📸 现场部分恢复（{action_count} 项）"
+    if status == "failed":
+        return f"⚠️  现场恢复失败（{action_count} 项）"
+    if status == "unsupported":
+        return f"📸 存在暂不支持的恢复动作（{action_count} 项）"
+    return ""
 
 
 def cli_runner() -> None:

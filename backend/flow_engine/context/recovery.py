@@ -21,6 +21,7 @@ RESTORE_PRIORITY: dict[str, RecoveryPriority] = {
     "open_tabs": RecoveryPriority.BEST_EFFORT,
     "open_files": RecoveryPriority.BEST_EFFORT,
     "active_url": RecoveryPriority.BEST_EFFORT,
+    "recent_tabs": RecoveryPriority.DISPLAY_ONLY,
     "session_duration_sec": RecoveryPriority.DISPLAY_ONLY,
     "capture_trigger": RecoveryPriority.DISPLAY_ONLY,
     "source_plugin": RecoveryPriority.DISPLAY_ONLY,
