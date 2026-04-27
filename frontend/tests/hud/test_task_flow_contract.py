@@ -89,7 +89,30 @@ class TaskFlowDaemon:
                             "title": "deep work",
                             "state": "In Progress",
                             "paused": [3],
-                            "restored_window": "Docs",
+                            "restore_report": {
+                                "version": 2,
+                                "task_id": 7,
+                                "overall_status": "skipped",
+                                "execution_enabled": False,
+                                "actions": [
+                                    {
+                                        "id": "active_url:0",
+                                        "type": "open_url",
+                                        "field": "active_url",
+                                        "role": "active",
+                                        "target": "https://example.com",
+                                        "status": "skipped",
+                                        "reason": "execution_disabled",
+                                        "source": "derived_aw_last_browser_segment",
+                                        "priority": "best_effort",
+                                    }
+                                ],
+                                "browser_session": {
+                                    "active_url": "https://example.com",
+                                    "browser_session_source": "derived_aw_last_browser_segment",
+                                },
+                                "user_message": None,
+                            },
                         },
                         "error": None,
                     }
@@ -138,7 +161,8 @@ def test_hud_ipc_plugin_preserves_canonical_task_flow_payloads(tmp_path) -> None
             start = await plugin.request("task.start", task_id=7)
             assert start["ok"] is True
             assert start["result"]["paused"] == [3]
-            assert start["result"]["restored_window"] == "Docs"
+            assert start["result"]["restore_report"]["version"] == 2
+            assert start["result"]["restore_report"]["actions"][0]["target"] == "https://example.com"
             assert start["result"]["state"] == "In Progress"
         finally:
             await daemon.stop()

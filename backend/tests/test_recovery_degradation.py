@@ -7,7 +7,7 @@ from flow_engine.app import FlowApp
 from flow_engine.client import LocalClient
 from flow_engine.config import AppConfig
 from flow_engine.context.base_plugin import Snapshot
-from flow_engine.notifications.base import Notification, Notifier, NotifyLevel
+from flow_engine.notifications.base import Notification, Notifier
 
 
 class FakeContext:
@@ -67,7 +67,22 @@ def _build_client(tmp_path: Path, context: FakeContext) -> tuple[LocalClient, Fl
     return LocalClient(app), app, notifier
 
 
-def test_recovery_degradation_levels_and_failure_isolation(tmp_path: Path) -> None:
+def _assert_report_v2(report: dict, *, task_id: int, status: str) -> None:
+    assert report["version"] == 2
+    assert report["task_id"] == task_id
+    assert report["overall_status"] == status
+    assert set(report) == {
+        "version",
+        "task_id",
+        "overall_status",
+        "execution_enabled",
+        "actions",
+        "browser_session",
+        "user_message",
+    }
+
+
+def test_recovery_report_v2_degradation_levels_and_failure_isolation(tmp_path: Path) -> None:
     async def scenario() -> None:
         context = FakeContext()
         client, app, notifier = _build_client(tmp_path, context)
@@ -87,8 +102,9 @@ def test_recovery_degradation_levels_and_failure_isolation(tmp_path: Path) -> No
                 session_duration_sec=30,
             )
             full = await client.start_task(1)
-            assert full["restore_report"]["failed"] == []
-            assert full["restore_report"]["degraded"] == []
+            _assert_report_v2(full["restore_report"], task_id=1, status="skipped")
+            assert full["restore_report"]["execution_enabled"] is False
+            assert {action["status"] for action in full["restore_report"]["actions"]} == {"skipped"}
             assert full["restore_report"]["user_message"] is None
             await client.done_task()
 
@@ -102,8 +118,8 @@ def test_recovery_degradation_levels_and_failure_isolation(tmp_path: Path) -> No
                 session_duration_sec=30,
             )
             aw_default = await client.start_task(2)
-            assert aw_default["restore_report"]["failed"] == []
-            assert aw_default["restore_report"]["degraded"] == []
+            _assert_report_v2(aw_default["restore_report"], task_id=2, status="skipped")
+            assert aw_default["restore_report"]["browser_session"]["active_url"] == "https://example.com/2"
             assert aw_default["restore_report"]["user_message"] is None
             assert not notifier.records
             await client.done_task()
@@ -121,11 +137,13 @@ def test_recovery_degradation_levels_and_failure_isolation(tmp_path: Path) -> No
                 source_plugin="fake",
                 capture_trigger="PAUSE",
                 session_duration_sec=30,
-                extra={"restore_degraded_fields": ["open_windows", "open_tabs", "active_url"]},
+                recent_tabs=["tab-3b"],
+                extra={"browser_session_source": "derived_aw_last_browser_segment"},
             )
             partial = await client.start_task(3)
-            assert partial["restore_report"]["failed"] == []
-            assert set(partial["restore_report"]["degraded"]) == {"open_windows", "open_tabs", "active_url"}
+            _assert_report_v2(partial["restore_report"], task_id=3, status="skipped")
+            assert partial["restore_report"]["browser_session"]["open_tabs"] == ["tab-3"]
+            assert partial["restore_report"]["browser_session"]["recent_tabs"] == ["tab-3b"]
             assert partial["restore_report"]["user_message"] is None
             await client.done_task()
 
@@ -137,34 +155,22 @@ def test_recovery_degradation_levels_and_failure_isolation(tmp_path: Path) -> No
                 session_duration_sec=30,
             )
             display_only = await client.start_task(4)
-            assert display_only["restore_report"]["failed"] == []
-            assert display_only["restore_report"]["degraded"] == []
-            assert display_only["restore_report"]["user_message"] is not None
-            assert notifier.records[-1].level == NotifyLevel.INFO
+            _assert_report_v2(display_only["restore_report"], task_id=4, status="empty")
+            assert display_only["restore_report"]["actions"] == []
+            assert display_only["restore_report"]["user_message"] is None
+            assert not notifier.records
             await client.done_task()
 
             await client.add_task(title="empty")
             empty = await client.start_task(5)
-            assert empty["restore_report"] == {
-                "task_id": 5,
-                "restored": {},
-                "degraded": [],
-                "failed": [],
-                "user_message": None,
-            }
+            _assert_report_v2(empty["restore_report"], task_id=5, status="empty")
             await client.done_task()
 
             await client.add_task(title="restore-error")
             context.fail_restore_for.add(6)
             restore_error = await client.start_task(6)
             assert restore_error["state"] == "In Progress"
-            assert restore_error["restore_report"] == {
-                "task_id": 6,
-                "restored": {},
-                "degraded": [],
-                "failed": [],
-                "user_message": None,
-            }
+            _assert_report_v2(restore_error["restore_report"], task_id=6, status="empty")
         finally:
             await app.shutdown()
 

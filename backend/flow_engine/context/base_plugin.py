@@ -38,13 +38,14 @@ class Snapshot:
 
     task_id: int
     timestamp: datetime = field(default_factory=datetime.now)
-    schema_version: int = 2
+    schema_version: int = 3
     active_window: str = ""
     active_url: str = ""
     active_file: str = ""
     active_workspace: str = ""
     open_windows: list[str] = field(default_factory=list)
     open_tabs: list[str] = field(default_factory=list)
+    recent_tabs: list[str] = field(default_factory=list)
     open_files: list[str] = field(default_factory=list)
     source_plugin: str = ""
     capture_trigger: str = ""
@@ -59,15 +60,17 @@ class Snapshot:
         新增核心字段时只需修改此方法，外部调用方无感。
         """
         data = dict(raw)  # 浅拷贝，避免破坏调用方的数据
+        data.pop("schema_version", None)
         return Snapshot(
             task_id=task_id,
-            schema_version=int(data.pop("schema_version", 2)),
+            schema_version=3,
             active_window=data.pop("active_window", ""),
             active_url=data.pop("active_url", ""),
             active_file=data.pop("active_file", ""),
             active_workspace=data.pop("active_workspace", ""),
             open_windows=_coerce_list(data.pop("open_windows", [])),
             open_tabs=_coerce_list(data.pop("open_tabs", [])),
+            recent_tabs=_coerce_list(data.pop("recent_tabs", [])),
             open_files=_coerce_list(data.pop("open_files", [])),
             source_plugin=data.pop("source_plugin", ""),
             capture_trigger=data.pop("capture_trigger", ""),
@@ -188,6 +191,7 @@ class SnapshotManager:
             active_workspace=data.get("active_workspace", ""),
             open_windows=_coerce_list(data.get("open_windows", [])),
             open_tabs=_coerce_list(data.get("open_tabs", [])),
+            recent_tabs=_coerce_list(data.get("recent_tabs", [])),
             open_files=_coerce_list(data.get("open_files", [])),
             source_plugin=data.get("source_plugin", ""),
             capture_trigger=data.get("capture_trigger", ""),
